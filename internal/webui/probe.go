@@ -17,6 +17,9 @@ import (
 const (
 	// 批量探测的并发数：别一次给源站开太多会话
 	probeConcurrency = 6
+	// 每次探测之间错开一下，避免「同一个瞬间」给源站开多路会话
+	// （有的 IPTV 服务器会话数一多就直接返回 562 繁忙）
+	probeStagger = 200 * time.Millisecond
 	// 最多保留多少个失败频道名给前端展示
 	probeMaxFailedNames = 60
 )
@@ -140,6 +143,7 @@ func (s *Server) runProbe(targets []store.Channel, autoDisable bool) {
 				}
 			}
 		}(ch)
+		time.Sleep(probeStagger) // 错开启动，别让源站同时收到一堆 RTSP 会话
 	}
 	wg.Wait()
 
