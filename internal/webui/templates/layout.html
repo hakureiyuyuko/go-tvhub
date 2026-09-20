@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} · {{.SiteTitle}}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='24' font-size='24'>📺</text></svg>">
+  <link rel="stylesheet" href="/static/style.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('tvhub-theme');
+        if (t) document.documentElement.dataset.theme = t;
+      } catch (e) { }
+    })();
+  </script>
+</head>
+<body>
+{{template "content" .}}
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js"></script>
+{{template "scripts" .}}
+</body>
+</html>

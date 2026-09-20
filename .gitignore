@@ -1,0 +1,27 @@
+# 二进制
+/tvhub
+/tvhub.exe
+/tvhub.exe~
+/dist/
+
+# 随程序携带的 ffmpeg（体积大，不入库）
+/ffmpeg/
+
+# 运行数据：数据库里有用户密码哈希和播放列表全文
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# 播放列表：里面通常带运营商鉴权参数，一律不入库（测试样例除外）
+/cqcu-unicast.m3u
+*.m3u
+*.m3u8
+!internal/m3u/testdata/*.m3u
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

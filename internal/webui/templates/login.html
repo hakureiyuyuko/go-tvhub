@@ -1,0 +1,29 @@
+{{define "content"}}
+<main class="login-wrap">
+  <form class="card login-card" method="post" action="/login">
+    <div class="login-logo">📺</div>
+    <h1>{{.SiteTitle}}</h1>
+    <p class="muted">家庭直播中转面板</p>
+    {{if .Error}}<div class="alert error">{{.Error}}</div>{{end}}
+    {{if .LoginWarn}}<div class="alert">{{.LoginWarn}}</div>{{end}}
+    <label class="field">
+      <span class="lbl">用户名</span>
+      <input name="username" autocomplete="username" autofocus required>
+    </label>
+    <label class="field">
+      <span class="lbl">密码</span>
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    {{if .TurnstileSiteKey}}
+    <div class="cf-turnstile" data-sitekey="{{.TurnstileSiteKey}}" data-theme="auto"></div>
+    {{end}}
+    <input type="hidden" name="next" value="{{.Next}}">
+    <button class="btn primary block" type="submit">登 录</button>
+  </form>
+  <p class="muted foot">v{{.Version}} · 服务端只做转发，不转码视频</p>
+</main>
+{{end}}
+
+{{define "scripts"}}
+{{if .TurnstileSiteKey}}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>{{end}}
+{{end}}

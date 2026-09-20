@@ -1,0 +1,119 @@
+{{define "content"}}
+<header class="topbar">
+  <div class="brand">📺 {{.SiteTitle}}<span class="tag">管理</span></div>
+  <div class="spacer"></div>
+  <a class="btn" href="/">返回播放</a>
+  <button class="btn icon" id="themeBtn" title="切换主题">🌗</button>
+  <span class="who">{{.User.Username}}</span>
+  <a class="btn" href="/logout">退出</a>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="overview">运行状态</button>
+  <button class="tab" data-tab="users">用户管理</button>
+  <button class="tab" data-tab="source">直播源</button>
+  <button class="tab" data-tab="channels">频道列表</button>
+  <button class="tab" data-tab="settings">参数设置</button>
+</nav>
+
+<main class="admin">
+  <section class="panel active" id="tab-overview">
+    <div class="cards" id="overviewCards"></div>
+    <div class="panel-head">
+      <h2>正在转发的频道</h2>
+      <button class="btn tiny" id="refreshOverview">刷新</button>
+    </div>
+    <div id="sessionsTable"></div>
+  </section>
+
+  <section class="panel" id="tab-users">
+    <h2>新建用户</h2>
+    <form id="userForm" class="inline-form">
+      <label class="field"><span class="lbl">用户名</span><input name="username" placeholder="2-32 字符" required></label>
+      <label class="field"><span class="lbl">密码</span><input name="password" type="password" placeholder="至少 6 位" required></label>
+      <label class="field"><span class="lbl">角色</span>
+        <select name="role"><option value="user">普通用户</option><option value="admin">管理员</option></select>
+      </label>
+      <button class="btn primary" type="submit">创建</button>
+    </form>
+    <h2>用户列表</h2>
+    <div id="usersTable"></div>
+  </section>
+
+  <section class="panel" id="tab-source">
+    <div class="panel-head">
+      <h2>M3U 播放列表</h2>
+      <span class="muted" id="m3uMeta"></span>
+    </div>
+    <p class="muted">支持 RTSP / RTMP / UDP / HTTP 源。导入时按地址匹配：已存在的频道保留启用状态与收藏，播放列表里消失的频道会被删除。</p>
+    <textarea id="m3uText" spellcheck="false" placeholder="#EXTM3U&#10;#EXTINF:-1 ,CCTV1 综合&#10;rtsp://…"></textarea>
+    <div class="row">
+      <button class="btn primary" id="m3uSave">保存并应用</button>
+      <label class="btn" for="m3uFile">上传文件…<input type="file" id="m3uFile" accept=".m3u,.m3u8,.txt" hidden></label>
+      <button class="btn" id="m3uExport">导出当前频道</button>
+    </div>
+    <div class="row">
+      <input id="m3uUrlInput" placeholder="也可以填一个 m3u 订阅地址，由服务器下载后导入" style="flex:1">
+      <button class="btn" id="m3uFetch">从地址导入</button>
+    </div>
+    <div id="m3uResult" class="alert hidden"></div>
+  </section>
+
+  <section class="panel" id="tab-channels">
+    <div class="panel-head">
+      <h2>频道列表</h2>
+      <div class="row">
+        <input id="chanSearch" class="search" type="search" placeholder="筛选名称 / 分组 / 地址">
+        <button class="btn tiny" id="refreshChannels">刷新</button>
+      </div>
+    </div>
+    <p class="muted">「探测」会调用 ffprobe 读取源站的编码与码率，用于确认频道是否可用。一键探测只处理当前«启用中»的频道，后台执行，可以关掉页面。</p>
+    <div class="row probe-bar">
+      <button class="btn primary" id="probeAll">一键探测全部</button>
+      <label class="switch"><input type="checkbox" id="probeAutoDisable" checked><span>自动停用探测失败的频道</span></label>
+      <button class="btn" id="disableFailed">停用已标记失败的</button>
+      <button class="btn tiny hidden" id="probeCancel">取消</button>
+    </div>
+    <div id="probeProgress" class="probe-progress hidden">
+      <div class="bar"><div class="bar-fill" id="probeBarFill"></div></div>
+      <div class="muted" id="probeText"></div>
+      <div class="muted" id="probeFailedList"></div>
+    </div>
+    <div id="channelsTable"></div>
+  </section>
+
+  <section class="panel" id="tab-settings">
+    <h2>参数设置</h2>
+    <form id="settingsForm" class="settings-form">
+      {{range $f := .Settings}}
+      <div class="field" {{if $f.ShowIf}}data-show-if="{{$f.ShowIf}}"{{end}}>
+        <span class="lbl">{{$f.Label}}</span>
+        {{if eq $f.Type "select"}}
+        <select name="{{$f.Key}}">
+          {{range $o := $f.Options}}<option value="{{$o.Value}}" {{if eq $o.Value (index $.SettingValues $f.Key)}}selected{{end}}>{{$o.Label}}</option>{{end}}
+        </select>
+        {{else if eq $f.Type "int"}}
+        <input type="number" name="{{$f.Key}}" value="{{index $.SettingValues $f.Key}}">
+        {{else if eq $f.Type "bool"}}
+        <label class="switch">
+          <input type="checkbox" name="{{$f.Key}}" value="1" {{if eq (index $.SettingValues $f.Key) "1"}}checked{{end}}>
+          <span>已开启</span>
+        </label>
+        {{else if eq $f.Type "password"}}
+        <input type="password" name="{{$f.Key}}" value="{{index $.SettingValues $f.Key}}" autocomplete="new-password" spellcheck="false">
+        {{else}}
+        <input type="text" name="{{$f.Key}}" value="{{index $.SettingValues $f.Key}}" spellcheck="false">
+        {{end}}
+        <small class="muted">{{$f.Hint}}</small>
+      </div>
+      {{end}}
+      <button class="btn primary" type="submit">保存设置</button>
+      <p class="muted">修改转发相关参数后，正在播放的流会在下次点播时使用新参数。</p>
+    </form>
+  </section>
+</main>
+{{end}}
+
+{{define "scripts"}}
+<script src="/static/admin.js"></script>
+{{end}}

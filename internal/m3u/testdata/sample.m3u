@@ -1,0 +1,23 @@
+#EXTM3U
+#EXTINF:-1 ,CCTV1 综合
+rtsp://10.10.0.1:554/live/ch1
+#EXTINF:-1 ,CCTV5 体育
+rtsp://10.10.0.1:554/live/ch5
+#EXTINF:-1 ,CGTN SD
+rtsp://10.10.0.1:554/live/ch44
+#EXTINF:-1 ,湖南卫视 4K HEVC HDR
+rtsp://10.10.0.2:554/live/hunan
+#EXTINF:-1 ,重庆卫视
+rtsp://10.10.0.2:554/live/cqws
+#EXTINF:-1 ,重庆新闻
+rtsp://10.10.0.2:554/live/cqxw
+#EXTINF:-1 ,上海纪实人文
+rtsp://10.10.0.2:554/live/shjs
+#EXTINF:-1 ,CHC 动作电影
+rtsp://10.10.0.3:554/live/chc
+#EXTINF:-1 ,IPTV 谍战剧场 SD
+rtsp://10.10.0.3:554/live/iptv1
+#EXTINF:-1 ,ETV 早期教育 SD
+rtsp://10.10.0.3:554/live/edu
+#EXTINF:-1 ,自建频道
+http://10.10.0.4:8080/live/index.m3u8

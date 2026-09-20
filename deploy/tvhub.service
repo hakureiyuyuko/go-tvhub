@@ -1,0 +1,22 @@
+[Unit]
+Description=tvhub 直播中转面板（RTSP/RTMP/UDP -> HLS）
+Documentation=file:/usr/share/doc/tvhub/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tvhub -addr :8099 -data /var/lib/tvhub -import /etc/tvhub/channels.m3u
+Restart=on-failure
+RestartSec=3
+# 需要读 m3u 和 ffmpeg，写数据目录
+StateDirectory=tvhub
+ReadWritePaths=/var/lib/tvhub
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

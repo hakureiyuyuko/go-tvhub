@@ -1,0 +1,62 @@
+{{define "content"}}
+<header class="topbar">
+  <div class="brand">📺 {{.SiteTitle}}<span class="tag">直播</span></div>
+  <div class="spacer"></div>
+  <input id="search" class="search" type="search" placeholder="搜索频道…" autocomplete="off">
+  <button class="btn icon" id="themeBtn" title="切换主题">🌗</button>
+  {{if .IsAdmin}}<a class="btn" href="/admin">管理</a>{{end}}
+  <span class="who">{{.User.Username}}</span>
+  <a class="btn" href="/logout">退出</a>
+</header>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <span id="chanCount" class="muted">加载中…</span>
+      <button class="btn tiny" id="collapseAll">全部收起</button>
+    </div>
+    <div id="channelList" class="channels"></div>
+    {{if .StreamURL}}
+    <details class="external">
+      <summary>外部播放器（VLC / Kodi / 电视盒子）</summary>
+      <p class="muted">把这个地址添加到播放器即可，无需登录：</p>
+      <div class="copyrow">
+        <input id="m3uUrl" readonly value="{{.StreamURL}}">
+        <button class="btn tiny" data-copy="#m3uUrl">复制</button>
+      </div>
+      <p class="muted">该地址使用你的专属播放令牌，可在管理页重置。</p>
+    </details>
+    {{end}}
+  </aside>
+
+  <main class="stage">
+    <div class="video-wrap">
+      <video id="video" controls playsinline preload="none"></video>
+      <div id="overlay" class="overlay">
+        <div class="overlay-inner">
+          <div id="spinner" class="spinner hidden"></div>
+          <div id="overlayText">请选择左侧频道开始播放</div>
+          <div id="overlayHint" class="muted"></div>
+          <button class="btn primary hidden" id="retryBtn">重试</button>
+        </div>
+      </div>
+    </div>
+    <div class="nowbar">
+      <div class="np">
+        <span id="npName" class="np-name">未选择频道</span>
+        <span id="npMeta" class="muted"></span>
+      </div>
+      <div class="np-actions">
+        <button class="btn tiny" id="prevBtn" title="上一个频道（↑）">上一个</button>
+        <button class="btn tiny" id="nextBtn" title="下一个频道（↓）">下一个</button>
+        <button class="btn tiny" id="stopBtn">断开</button>
+      </div>
+    </div>
+  </main>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script src="/static/hls.min.js"></script>
+<script src="/static/player.js"></script>
+{{end}}

@@ -1,0 +1,7 @@
+# 统一换行符：仓库里一律 LF（部署目标是 Linux，systemd unit / shell 脚本尤其重要）
+* text=auto eol=lf
+
+# 二进制
+*.png binary
+*.ico binary
+*.jpg binary
