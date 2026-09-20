@@ -18,6 +18,7 @@ const (
 	KeySiteTitle     = "site_title"
 	KeyFFmpegPath    = "ffmpeg_path"
 	KeyTransport     = "rtsp_transport"
+	KeyTSFix         = "ts_fix"
 	KeyAudioMode     = "audio_mode"
 	KeyHLSTime       = "hls_time"
 	KeyHLSListSize   = "hls_list_size"
@@ -57,6 +58,8 @@ func Fields() []Field {
 		{Key: KeyFFmpegPath, Label: "ffmpeg 路径", Type: "text", Default: "ffmpeg", Hint: "留空或 ffmpeg 表示使用 PATH 中的版本；填绝对路径可指定自编译版本"},
 		{Key: KeyTransport, Label: "RTSP 传输方式", Type: "select", Default: "tcp", Options: []Opt{{"tcp", "TCP（推荐，稳定）"}, {"udp", "UDP（低延迟）"}}, Hint: "源站对 UDP 丢包敏感时选 TCP"},
 		{Key: KeyAudioMode, Label: "音频处理", Type: "select", Default: "aac", Options: []Opt{{"aac", "转成 AAC（浏览器兼容，推荐）"}, {"copy", "原样复制（零转码，但部分浏览器无法播放 MP2/AC3）"}}, Hint: "视频一律原样复制，不转码"},
+		{Key: KeyTSFix, Label: "时间戳修复（推荐开启）", Type: "bool", Default: "1",
+			Hint: "用数据到达时间重建单调时间轴。源站时间戳跳跃/倒退时，HLS 分片时长会变成 1 秒、十几秒混在一起，画面一直卡；开启后分片恢复稳定（实测有效）。只有源站本身就是突发式传输时才建议关掉"},
 		{Key: KeyHLSTime, Label: "分片时长（秒）", Type: "int", Default: "2", Hint: "越小延迟越低，但请求更频繁；建议 2-4"},
 		{Key: KeyHLSListSize, Label: "播放列表分片数", Type: "int", Default: "6", Hint: "决定播放端的缓冲时长"},
 		{Key: KeyIdleSeconds, Label: "无人观看后停止（秒）", Type: "int", Default: "45", Hint: "多久没有请求就关掉转发进程"},
@@ -178,5 +181,6 @@ func (v *Values) StreamOptions() stream.Options {
 	o.Max = v.Int(KeyMaxSessions, 8)
 	o.Extra = v.m[KeyExtraArgs]
 	o.ProbeTimeout = time.Duration(v.Int(KeyProbeTimeout, 15)) * time.Second
+	o.TSFix = v.Bool(KeyTSFix, true)
 	return o.Normalize()
 }

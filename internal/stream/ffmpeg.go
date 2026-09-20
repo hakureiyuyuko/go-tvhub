@@ -30,6 +30,7 @@ type Options struct {
 	Idle         time.Duration // 无观众后多久停止
 	Max          int           // 最大并发转发路数
 	Extra        string        // 追加的 ffmpeg 参数
+	TSFix        bool          // 用到达时间重建单调时间轴（治源站时间戳跳跃）
 	ProbeTimeout time.Duration // 单次 ffprobe 探测超时
 }
 
@@ -43,6 +44,7 @@ func DefaultOptions() Options {
 		HLSList:      6,
 		Idle:         45 * time.Second,
 		Max:          8,
+		TSFix:        true,
 		ProbeTimeout: 15 * time.Second,
 	}
 }
@@ -109,6 +111,12 @@ func (o Options) hlsArgs(ch store.Channel, outDir string) []string {
 		args = append(args, "-rtsp_transport", o.Transport, "-timeout", "15000000")
 	case "rtmp":
 		args = append(args, "-rtmp_live", "live")
+	}
+	// 源站的时间戳会周期性倒退（实测日志：Non-monotonic DTS + RTP bad cseq），
+	// 后果是 HLS 分片时长变成 1 秒 / 11 秒混在一起，前端时间轴跟着乱、一直卡。
+	// 用数据到达时间重建单调时间轴可以根治（已做过 A/B 对比实测）。
+	if o.TSFix && ch.Kind() != "http" {
+		args = append(args, "-use_wallclock_as_timestamps", "1")
 	}
 	if h := strings.TrimSpace(ch.Headers); h != "" {
 		args = append(args, "-headers", h)
