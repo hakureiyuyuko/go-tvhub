@@ -19,6 +19,7 @@ const (
 	KeyFFmpegPath    = "ffmpeg_path"
 	KeyTransport     = "rtsp_transport"
 	KeyTSFix         = "ts_fix"
+	KeySplitByTime   = "hls_split_by_time"
 	KeyAudioMode     = "audio_mode"
 	KeyHLSTime       = "hls_time"
 	KeyHLSListSize   = "hls_list_size"
@@ -60,6 +61,8 @@ func Fields() []Field {
 		{Key: KeyAudioMode, Label: "音频处理", Type: "select", Default: "aac", Options: []Opt{{"aac", "转成 AAC（浏览器兼容，推荐）"}, {"copy", "原样复制（零转码，但部分浏览器无法播放 MP2/AC3）"}}, Hint: "视频一律原样复制，不转码"},
 		{Key: KeyTSFix, Label: "时间戳修复（推荐开启）", Type: "bool", Default: "1",
 			Hint: "用数据到达时间重建单调时间轴。源站时间戳跳跃/倒退时，HLS 分片时长会变成 1 秒、十几秒混在一起，画面一直卡；开启后分片恢复稳定（实测有效）。只有源站本身就是突发式传输时才建议关掉"},
+		{Key: KeySplitByTime, Label: "强制按分片时长切片", Type: "bool", Default: "0",
+			Hint: "不等关键帧、到点就切。源站关键帧间隔很长，或开启时间戳修复后分片仍然偏大（4-8 秒）时打开；代价是分片可能从非关键帧开始，刚进频道时可能有 1-2 秒花屏"},
 		{Key: KeyHLSTime, Label: "分片时长（秒）", Type: "int", Default: "2", Hint: "越小延迟越低，但请求更频繁；建议 2-4"},
 		{Key: KeyHLSListSize, Label: "播放列表分片数", Type: "int", Default: "6", Hint: "决定播放端的缓冲时长"},
 		{Key: KeyIdleSeconds, Label: "无人观看后停止（秒）", Type: "int", Default: "45", Hint: "多久没有请求就关掉转发进程"},
@@ -182,5 +185,6 @@ func (v *Values) StreamOptions() stream.Options {
 	o.Extra = v.m[KeyExtraArgs]
 	o.ProbeTimeout = time.Duration(v.Int(KeyProbeTimeout, 15)) * time.Second
 	o.TSFix = v.Bool(KeyTSFix, true)
+	o.SplitByTime = v.Bool(KeySplitByTime, false)
 	return o.Normalize()
 }

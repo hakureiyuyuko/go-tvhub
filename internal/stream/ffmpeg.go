@@ -31,6 +31,7 @@ type Options struct {
 	Max          int           // 最大并发转发路数
 	Extra        string        // 追加的 ffmpeg 参数
 	TSFix        bool          // 用到达时间重建单调时间轴（治源站时间戳跳跃）
+	SplitByTime  bool          // 强制到点就切，不等关键帧
 	ProbeTimeout time.Duration // 单次 ffprobe 探测超时
 }
 
@@ -135,10 +136,20 @@ func (o Options) hlsArgs(ch store.Channel, outDir string) []string {
 		"-hls_time", strconv.Itoa(o.HLSTime),
 		"-hls_list_size", strconv.Itoa(o.HLSList),
 		"-hls_delete_threshold", "3",
-		"-hls_flags", "delete_segments+omit_endlist+independent_segments",
+		"-hls_flags", o.hlsFlags(),
 		"-hls_segment_filename", filepath.Join(outDir, "seg_%05d.ts"),
 		filepath.Join(outDir, "index.m3u8"),
 	)
+}
+
+// hlsFlags 组装 HLS muxer 的 flags。
+func (o Options) hlsFlags() string {
+	f := "delete_segments+omit_endlist+independent_segments"
+	if o.SplitByTime {
+		// 不等待关键帧，到 hls_time 就切：源站关键帧间隔很长时用它把分片压回目标时长
+		f += "+split_by_time"
+	}
+	return f
 }
 
 // probeArgs 构造 ffprobe 命令。
