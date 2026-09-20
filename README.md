@@ -106,7 +106,7 @@ unit 文件以 root 运行但做了加固：`StateDirectory=tvhub` 自动建并�
 
 ## 自己编译
 
-仓库里 `dist/` 已经放了交叉编译好的二进制；要自己编（需要 Go 1.24+）：
+仓库里 `dist/` 已经放了交叉编译好的二进制；要自己编（需要 **Go 1.26+**，因为 `golang.org/x/crypto` 要求）：
 
 ```bash
 make build          # 当前平台 -> tvhub / tvhub.exe
@@ -206,6 +206,17 @@ deploy/tvhub.service        systemd 单元示例
 - [hls.js](https://github.com/video-dev/hls.js) v1.6.15（Apache-2.0）—— 浏览器端 HLS 播放器，原样内嵌在 `internal/webui/static/hls.min.js`，归属说明见同目录的 `hls.min.js.LICENSE.txt`。
 - Go 依赖只有两个：`modernc.org/sqlite`（BSD-3-Clause，纯 Go 的 SQLite 驱动）和 `golang.org/x/crypto`（BSD-3-Clause，bcrypt）。其余全部来自标准库。
 - 前端零框架、零构建步骤，`app.js` / `player.js` / `admin.js` / `style.css` 都是手写的。
+
+## 发版（自己发一个 Release）
+
+推一个 `v*` 标签就会自动发版——CI 会跑测试、交叉编译四个平台、生成 `SHA256SUMS.txt` 并建 Release：
+
+```bash
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+工作流在 `.github/workflows/release.yml`，用的是 runner 自带的 `gh` CLI，不需要装任何东西。想本地产出二进制用 `make dist`。
 
 ## 许可证
 
