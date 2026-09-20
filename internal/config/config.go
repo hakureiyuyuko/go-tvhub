@@ -15,20 +15,21 @@ import (
 
 // 设置项键名。
 const (
-	KeySiteTitle    = "site_title"
-	KeyFFmpegPath   = "ffmpeg_path"
-	KeyTransport    = "rtsp_transport"
-	KeyAudioMode    = "audio_mode"
-	KeyHLSTime      = "hls_time"
-	KeyHLSListSize  = "hls_list_size"
-	KeyIdleSeconds  = "idle_seconds"
-	KeyMaxSessions  = "max_sessions"
-	KeyExtraArgs    = "extra_ffmpeg_args"
-	KeyProbeTimeout = "probe_timeout"
-	KeyM3UContent   = "m3u_content"
-	KeyM3USource    = "m3u_source_name"
-	KeyM3UApplied   = "m3u_applied_at"
-	KeySecret       = "server_secret"
+	KeySiteTitle     = "site_title"
+	KeyFFmpegPath    = "ffmpeg_path"
+	KeyTransport     = "rtsp_transport"
+	KeyAudioMode     = "audio_mode"
+	KeyHLSTime       = "hls_time"
+	KeyHLSListSize   = "hls_list_size"
+	KeyIdleSeconds   = "idle_seconds"
+	KeyMaxSessions   = "max_sessions"
+	KeyExtraArgs     = "extra_ffmpeg_args"
+	KeyProbeTimeout  = "probe_timeout"
+	KeyProbeInterval = "probe_interval_ms"
+	KeyM3UContent    = "m3u_content"
+	KeyM3USource     = "m3u_source_name"
+	KeyM3UApplied    = "m3u_applied_at"
+	KeySecret        = "server_secret"
 
 	KeyTurnstileEnabled = "turnstile_enabled"
 	KeyTurnstileSiteKey = "turnstile_site_key"
@@ -63,6 +64,8 @@ func Fields() []Field {
 		{Key: KeyExtraArgs, Label: "追加 ffmpeg 参数", Type: "text", Default: "", Hint: "高级选项，会插到 -i 之前，例如 -rtsp_flags prefer_tcp"},
 		{Key: KeyProbeTimeout, Label: "探测超时（秒）", Type: "int", Default: "15",
 			Hint: "源站不给你看的频道会一直挂着不响应，所以这个值直接决定「一键探测」跑多快；能正常播的频道通常 1 秒内就返回，可以调到 5-8 秒"},
+		{Key: KeyProbeInterval, Label: "探测间隔（毫秒）", Type: "int", Default: "1500",
+			Hint: "两次探测之间的间隔。IPTV 平台是按账号限流的（触发后 1 小时内面板和机顶盒都看不了），被限流过就调到 5000-8000 更保险，代价是跑得更慢"},
 		{Key: KeyTurnstileEnabled, Label: "登录页启用 Cloudflare Turnstile 人机验证", Type: "bool", Default: "0",
 			Hint: "防止暴力破解和爬虫。注意：开启后登录页需要能访问 challenges.cloudflare.com，纯内网环境会无法登录"},
 		{Key: KeyTurnstileSiteKey, Label: "Turnstile 站点密钥（Site Key）", Type: "text", ShowIf: KeyTurnstileEnabled,

@@ -294,15 +294,19 @@
   }
 
   $('#probeAll').addEventListener('click', async function () {
-    const n = channelsCache.length;
-    if (!confirm('开始逐个探测所有启用中的频道（' + n + ' 个）？\n\n' +
-      '⚠ 探测会向源站建立大量会话，一样消耗你账号的额度：\n' +
-      '请求过密会触发 IPTV 平台限流（实测被限流时整条线路、连机顶盒都会无法播放，\n' +
-      '提示 RateLimitedExceeded，一般要等 1 小时）。\n\n' +
-      '已改成串行、每个间隔 1.5 秒，' + n + ' 个台大约需要 ' + Math.max(2, Math.round(n * 0.22)) + ' 分钟。\n' +
-      '可以关掉页面去忙别的，但请不要重复触发。确认开始？')) { return; }
+    const withDisabled = $('#probeIncludeDisabled').checked;
+    const targets = channelsCache.filter(function (c) { return withDisabled || !c.disabled; }).length;
+    if (!confirm('开始逐个探测 ' + targets + ' 个频道' + (withDisabled ? '（包含已停用的，用于复查）' : '（只探启用中的）') + '？\n\n' +
+      '⚠ 探测消耗的是你账号的额度，和机顶盒是同一套鉴权：\n' +
+      '请求过密会触发 IPTV 平台限流 —— 实测被限流后整个账号（面板＋机顶盒）都无法播放，\n' +
+      '提示 RateLimitedExceeded，要等 1 小时。\n\n' +
+      '现在是串行 + 按「参数设置 → 探测间隔」，' + targets + ' 个台大约 ' + Math.max(2, Math.round(targets * 0.25)) + ' 分钟。\n' +
+      '可以关掉页面去忙别的，请不要重复触发。确认开始？')) { return; }
     try {
-      const st = await postJSON('/admin/api/probe/start', { auto_disable: $('#probeAutoDisable').checked });
+      const st = await postJSON('/admin/api/probe/start', {
+        auto_disable: $('#probeAutoDisable').checked,
+        include_disabled: withDisabled
+      });
       renderProbe(st);
       pollProbe();
       toast('已开始后台探测', 'ok');

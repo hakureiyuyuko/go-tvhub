@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"tvhub/internal/config"
 	"tvhub/internal/store"
 )
 
@@ -24,8 +25,10 @@ const (
 	// 连机顶盒都一起看不了。因为探测用的是跟机顶盒同一套 AuthInfo（同一个账号额度）。
 	// 宁可跑得慢，也别再把用户家里的电视搞挂。
 	probeConcurrency = 1
-	// 每个探测之间固定间隔，把请求频率压到接近“人手动换台”的水平
-	probeStagger = 1500 * time.Millisecond
+	// 每个探测之间的默认间隔（毫秒级配置项 probe_interval_ms 控制）
+	probeDefaultInterval = 1500 * time.Millisecond
+	probeMinInterval     = 200 * time.Millisecond
+	probeMaxInterval     = 10 * time.Second
 	// 最多保留多少个失败频道名给前端展示
 	probeMaxFailedNames = 60
 	// 两轮探测之间的硬性冷却：触发限流的代价是「一小时内面板和机顶盒都看不了电视」，
@@ -116,11 +119,17 @@ func (s *Server) startProbe(autoDisable, includeDisabled bool) (ProbeStatus, err
 		}
 	}
 	s.probe.set(func(st *ProbeStatus) { st.Total = len(targets) })
-	go s.runProbe(targets, autoDisable)
+
+	// 间隔可通过设置项调整：被限流过的话就调大，把请求频率压下来
+	interval := time.Duration(s.Config().Int(config.KeyProbeInterval, int(probeDefaultInterval/time.Millisecond))) * time.Millisecond
+	if interval < probeMinInterval || interval > probeMaxInterval {
+		interval = probeDefaultInterval
+	}
+	go s.runProbe(targets, autoDisable, interval)
 	return s.probe.Status(), nil
 }
 
-func (s *Server) runProbe(targets []store.Channel, autoDisable bool) {
+func (s *Server) runProbe(targets []store.Channel, autoDisable bool, interval time.Duration) {
 	sem := make(chan struct{}, probeConcurrency)
 	var wg sync.WaitGroup
 	for _, ch := range targets {
@@ -160,7 +169,7 @@ func (s *Server) runProbe(targets []store.Channel, autoDisable bool) {
 				}
 			}
 		}(ch)
-		time.Sleep(probeStagger) // 错开启动，别让源站同时收到一堆 RTSP 会话
+		time.Sleep(interval) // 错开启动，把请求频率压到接近“人手动换台”的水平
 	}
 	wg.Wait()
 
