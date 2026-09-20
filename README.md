@@ -12,6 +12,22 @@
                         └── ffmpeg 把 RTSP 重新封装成 HLS（视频不转码）
 ```
 
+## 界面截图
+
+**播放页** —— 左侧频道列表（搜索 / 分组 / 收藏 / ↑↓ 换台），右侧 hls.js 播放，亮暗主题可切；电视盒子的遥控器就用上下键换台：
+
+![播放页](docs/screenshots/player.png)
+
+**频道列表 + 一键探测** —— 后台批量 ffprobe，探测失败的频道可自动停用（随时能再启用），结果直接写在列表里：
+
+![频道列表与一键探测](docs/screenshots/channels-probe.png)
+
+| 用户管理 | 参数设置 | 登录页（可选 Turnstile） |
+| --- | --- | --- |
+| ![用户管理](docs/screenshots/users.png) | ![参数设置](docs/screenshots/settings.png) | ![登录页](docs/screenshots/login.png) |
+
+> 截图里是演示数据，源站地址已经抹成示例地址。
+
 ## 功能
 
 - **播放页**：左侧频道列表（搜索、分组、收藏、上下键换台），右侧 hls.js 播放；暗色/亮色主题可切换。
