@@ -2,7 +2,8 @@ name: release
 
 # 推一个 v* 标签就会自动发版：
 #   git tag v1.0.1 && git push origin v1.0.1
-# 四个平台的二进制会由 runner 交叉编译（CGO_ENABLED=0，纯 Go SQLite 驱动，不需要 gcc）。
+# 四个平台的二进制由 runner 交叉编译（CGO_ENABLED=0，纯 Go SQLite 驱动，不需要 gcc），
+# 最后用 runner 自带的 gh CLI 建 Release 并上传产物与 SHA256SUMS.txt。
 
 on:
   push:
@@ -24,9 +25,9 @@ jobs:
           - { name: tvhub-linux-armv7,       goos: linux,   goarch: arm,   goarm: "7" }
           - { name: tvhub-windows-amd64.exe, goos: windows, goarch: amd64 }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -44,7 +45,7 @@ jobs:
           GOARM: ${{ matrix.goarm }}
         run: go build -trimpath -ldflags "-s -w" -o "dist/${{ matrix.name }}" .
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: dist/${{ matrix.name }}
@@ -54,7 +55,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      # gh 需要 git 仓库上下文，缺了会报 "fatal: not a git repository"
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -65,7 +69,6 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      # runner 自带 gh CLI，所以不需要第三方 action
       - name: 创建 / 更新 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
