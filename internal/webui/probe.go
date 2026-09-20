@@ -6,6 +6,7 @@ package webui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,14 +16,21 @@ import (
 )
 
 const (
-	// 批量探测的并发数，故意压得很低：
-	// IPTV 服务器对并发会话数量很敏感（实测 6 路并发时出现过 562 繁忙，
-	// 高频全量探测之后整条线路一度 "No route to host"）。宁可慢点。
-	probeConcurrency = 3
-	// 每次探测之间错开一下，避免「同一个瞬间」给源站开多路会话
-	probeStagger = 500 * time.Millisecond
+	// 批量探测的并发数。故意设成 1（完全串行）：
+	//
+	// 实测教训（2026-09）：并发 6 时源站报过 "562 (Wait MLSS TimeOut)"；
+	// 短时间内跑了几轮全量探测（约 250 次会话/40 分钟）之后，IPTV 平台直接对
+	// 这个账号返回 429 RateLimitedExceeded: please try again in 1 hour，
+	// 连机顶盒都一起看不了。因为探测用的是跟机顶盒同一套 AuthInfo（同一个账号额度）。
+	// 宁可跑得慢，也别再把用户家里的电视搞挂。
+	probeConcurrency = 1
+	// 每个探测之间固定间隔，把请求频率压到接近“人手动换台”的水平
+	probeStagger = 1500 * time.Millisecond
 	// 最多保留多少个失败频道名给前端展示
 	probeMaxFailedNames = 60
+	// 两轮探测之间的硬性冷却：触发限流的代价是「一小时内面板和机顶盒都看不了电视」，
+	// 所以宁可拦住重复点击。
+	probeCooldown = 5 * time.Minute
 )
 
 // ProbeStatus 是一次批量探测的进度快照（直接序列化给前端轮询）。
@@ -43,9 +51,10 @@ type ProbeStatus struct {
 
 // probeJob 管理「一键探测」后台任务，同一时刻只跑一个。
 type probeJob struct {
-	mu     sync.Mutex
-	st     ProbeStatus
-	cancel atomic.Bool
+	mu         sync.Mutex
+	st         ProbeStatus
+	cancel     atomic.Bool
+	lastFinish time.Time
 }
 
 // Status 返回当前进度。
@@ -78,6 +87,13 @@ func (s *Server) startProbe(autoDisable, includeDisabled bool) (ProbeStatus, err
 		st := s.probe.st
 		s.probe.mu.Unlock()
 		return st, errors.New("已有探测任务在进行中")
+	}
+	if !s.probe.lastFinish.IsZero() {
+		if since := time.Since(s.probe.lastFinish); since < probeCooldown {
+			wait := int((probeCooldown - since).Minutes()) + 1
+			s.probe.mu.Unlock()
+			return s.probe.st, fmt.Errorf("上一轮探测 %d 分钟前刚结束，为避免触发源站限流（触发后连机顶盒都会一起看不了，要等 1 小时），请 %d 分钟后再试", int(since.Minutes()), wait)
+		}
 	}
 	s.probe.cancel.Store(false)
 	s.probe.st = ProbeStatus{
@@ -155,6 +171,9 @@ func (s *Server) runProbe(targets []store.Channel, autoDisable bool) {
 		st.Cancelled = cancelled
 		st.FinishedAt = time.Now().Format("15:04:05")
 	})
+	s.probe.mu.Lock()
+	s.probe.lastFinish = time.Now()
+	s.probe.mu.Unlock()
 	final := s.probe.Status()
 	s.log.Info("批量探测完成", "总", final.Total, "可用", final.OK, "失败", final.Failed,
 		"自动停用", final.Disabled, "取消", final.Cancelled)

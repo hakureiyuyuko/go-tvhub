@@ -294,7 +294,13 @@
   }
 
   $('#probeAll').addEventListener('click', async function () {
-    if (!confirm('开始后台探测所有启用中的频道？频道多的时候要几分钟，可以关掉页面去忙别的。')) { return; }
+    const n = channelsCache.length;
+    if (!confirm('开始逐个探测所有启用中的频道（' + n + ' 个）？\n\n' +
+      '⚠ 探测会向源站建立大量会话，一样消耗你账号的额度：\n' +
+      '请求过密会触发 IPTV 平台限流（实测被限流时整条线路、连机顶盒都会无法播放，\n' +
+      '提示 RateLimitedExceeded，一般要等 1 小时）。\n\n' +
+      '已改成串行、每个间隔 1.5 秒，' + n + ' 个台大约需要 ' + Math.max(2, Math.round(n * 0.22)) + ' 分钟。\n' +
+      '可以关掉页面去忙别的，但请不要重复触发。确认开始？')) { return; }
     try {
       const st = await postJSON('/admin/api/probe/start', { auto_disable: $('#probeAutoDisable').checked });
       renderProbe(st);
