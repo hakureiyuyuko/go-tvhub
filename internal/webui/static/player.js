@@ -133,8 +133,10 @@
     const fps = st.fps || 0;
     const peak = st.peak_fps || 0;
     const pct = (peak > 1 && fps > 0) ? Math.round(fps * 100 / peak) : 0;
-    srcWarn.textContent = '⚠ 源站投递不足：' + rate.toFixed(2) + 'x 实时' +
-      (pct ? '（帧率约为峰值的 ' + pct + '%）' : '') +
+    // 帧率百分比是「相对本会话峰值」，只有明显低于峰值时才写出来，
+    // 否则会和倍率一起让人误读（源站一开始就限速时峰值也是半速）
+    const note = (pct && pct < 90) ? '（帧率约为峰值的 ' + pct + '%）' : '';
+    srcWarn.textContent = '⚠ 源站投递不足：' + rate.toFixed(2) + 'x 实时' + note +
       '，画面会变慢或卡顿。这是源站侧限速/拥堵，不是面板的问题。';
     srcWarn.classList.remove('hidden');
   }
