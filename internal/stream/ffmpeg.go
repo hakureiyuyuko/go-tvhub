@@ -18,30 +18,32 @@ import (
 )
 
 // probeTimeout 是单次 ffprobe 探测的超时（批量探测时也用它）。
-const probeTimeout = 15 * time.Second
+const defaultProbeTimeout = 15 * time.Second
 
 // Options 是转发进程的运行时参数，由面板设置派生。
 type Options struct {
-	FFmpeg    string        // ffmpeg 可执行文件路径
-	Transport string        // RTSP 传输方式：tcp / udp
-	AudioMode string        // aac：音频转 AAC（浏览器兼容）；copy：音频直通
-	HLSTime   int           // 分片时长（秒）
-	HLSList   int           // 播放列表保留分片数
-	Idle      time.Duration // 无观众后多久停止
-	Max       int           // 最大并发转发路数
-	Extra     string        // 追加的 ffmpeg 参数
+	FFmpeg       string        // ffmpeg 可执行文件路径
+	Transport    string        // RTSP 传输方式：tcp / udp
+	AudioMode    string        // aac：音频转 AAC（浏览器兼容）；copy：音频直通
+	HLSTime      int           // 分片时长（秒）
+	HLSList      int           // 播放列表保留分片数
+	Idle         time.Duration // 无观众后多久停止
+	Max          int           // 最大并发转发路数
+	Extra        string        // 追加的 ffmpeg 参数
+	ProbeTimeout time.Duration // 单次 ffprobe 探测超时
 }
 
 // DefaultOptions 返回默认参数。
 func DefaultOptions() Options {
 	return Options{
-		FFmpeg:    "ffmpeg",
-		Transport: "tcp",
-		AudioMode: "aac",
-		HLSTime:   2,
-		HLSList:   6,
-		Idle:      45 * time.Second,
-		Max:       8,
+		FFmpeg:       "ffmpeg",
+		Transport:    "tcp",
+		AudioMode:    "aac",
+		HLSTime:      2,
+		HLSList:      6,
+		Idle:         45 * time.Second,
+		Max:          8,
+		ProbeTimeout: 15 * time.Second,
 	}
 }
 
@@ -70,6 +72,9 @@ func (o Options) Normalize() Options {
 	}
 	if o.Max > 64 {
 		o.Max = 64
+	}
+	if o.ProbeTimeout < 3*time.Second || o.ProbeTimeout > 60*time.Second {
+		o.ProbeTimeout = 15 * time.Second
 	}
 	return o
 }
@@ -177,7 +182,7 @@ func splitArgs(s string) []string {
 // FFmpegVersion 检测 ffmpeg 是否可用，返回版本号。
 func (o Options) FFmpegVersion() (string, error) {
 	o = o.Normalize()
-	ctx, cancel := timeoutCtx(5 * time.Second)
+	ctx, cancel := timeoutCtx(defaultProbeTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, o.FFmpeg, "-version").Output()
 	if err != nil {
@@ -221,7 +226,7 @@ type ffprobeJSON struct {
 // Probe 用 ffprobe 探测频道，用于面板排障。
 func (o Options) Probe(ch store.Channel) ProbeResult {
 	o = o.Normalize()
-	ctx, cancel := timeoutCtx(probeTimeout)
+	ctx, cancel := timeoutCtx(o.ProbeTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, o.FFprobe(), o.probeArgs(ch)...)
 	out, err := cmd.Output()

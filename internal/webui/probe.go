@@ -15,11 +15,12 @@ import (
 )
 
 const (
-	// 批量探测的并发数：别一次给源站开太多会话
-	probeConcurrency = 6
+	// 批量探测的并发数，故意压得很低：
+	// IPTV 服务器对并发会话数量很敏感（实测 6 路并发时出现过 562 繁忙，
+	// 高频全量探测之后整条线路一度 "No route to host"）。宁可慢点。
+	probeConcurrency = 3
 	// 每次探测之间错开一下，避免「同一个瞬间」给源站开多路会话
-	// （有的 IPTV 服务器会话数一多就直接返回 562 繁忙）
-	probeStagger = 200 * time.Millisecond
+	probeStagger = 500 * time.Millisecond
 	// 最多保留多少个失败频道名给前端展示
 	probeMaxFailedNames = 60
 )
