@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,6 +49,7 @@ type Session struct {
 	exitErr  error
 
 	logs *ringLog
+	rate *rateTracker
 
 	mu      sync.Mutex
 	clients map[string]time.Time
@@ -62,6 +64,7 @@ func newSession(root string, ch store.Channel) *Session {
 		dir:         filepath.Join(root, fmt.Sprintf("ch%d-%d", ch.ID, time.Now().UnixNano())),
 		exited:      make(chan struct{}),
 		logs:        newRingLog(80),
+		rate:        newRateTracker(10 * time.Second),
 		clients:     map[string]time.Time{},
 	}
 }
@@ -130,6 +133,8 @@ func (s *Session) start(o Options) error {
 	cmd := exec.CommandContext(ctx, o.FFmpeg, args...)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = s.logs
+	// ffmpeg 的 -progress 行交给速率统计，其余（告警/报错）留在日志里
+	s.logs.onLine = s.rate.feed
 	s.cmd = cmd
 	s.started = time.Now()
 	s.touch()
@@ -274,6 +279,13 @@ type Stat struct {
 	Viewers   int    `json:"viewers"`
 	Error     string `json:"error,omitempty"`
 	Log       string `json:"log,omitempty"`
+
+	// 源站投递速率：媒体时间 / 真实时间。-1 表示暂无数据。
+	// 1.00x 正常；明显小于 1 说明源站在限速或拥堵（画面会变慢/卡顿）。
+	Rate float64 `json:"rate"`
+	// 窗口内 mux 出的帧率及其峰值；与时间戳模式无关，可做交叉验证。
+	FPS     float64 `json:"fps"`
+	PeakFPS float64 `json:"peak_fps"`
 }
 
 // Stat 返回会话状态。
@@ -299,8 +311,20 @@ func (s *Session) Stat() Stat {
 	if st.State == "error" {
 		st.Log = s.logs.Tail(8)
 	}
+	if s.rate != nil {
+		rate, fps, peak, ok := s.rate.snapshot(time.Now())
+		if ok {
+			st.Rate = round2(rate)
+		}
+		st.FPS = round1(fps)
+		st.PeakFPS = round1(peak)
+	}
 	return st
 }
+
+func round2(v float64) float64 { return math.Round(v*100) / 100 }
+
+func round1(v float64) float64 { return math.Round(v*10) / 10 }
 
 func (s *Session) isExited() bool {
 	select {
@@ -508,11 +532,14 @@ func (m *Manager) Active() int {
 }
 
 // ringLog 是一个只保留最近若干行的 io.Writer，用来捕获 ffmpeg 的 stderr。
+// onLine 非空时会先拿到每一行：返回 true 表示这行已被消费（例如 -progress
+// 的进度行），不再进日志，避免把告警刷掉。
 type ringLog struct {
-	mu    sync.Mutex
-	lines []string
-	cur   []byte
-	max   int
+	mu     sync.Mutex
+	lines  []string
+	cur    []byte
+	max    int
+	onLine func(string) bool
 }
 
 func newRingLog(max int) *ringLog { return &ringLog{max: max} }
@@ -539,6 +566,9 @@ func (r *ringLog) Write(p []byte) (int, error) {
 func (r *ringLog) push(line string) {
 	line = strings.TrimSpace(line)
 	if line == "" {
+		return
+	}
+	if r.onLine != nil && r.onLine(line) {
 		return
 	}
 	r.lines = append(r.lines, line)

@@ -45,7 +45,7 @@ func DefaultOptions() Options {
 		HLSList:      6,
 		Idle:         45 * time.Second,
 		Max:          8,
-		TSFix:        true,
+		TSFix:        false,
 		ProbeTimeout: 15 * time.Second,
 	}
 }
@@ -106,7 +106,9 @@ func exeSuffix() string {
 // hlsArgs 构造 HLS 转发命令：视频流原样复制，不转码。
 func (o Options) hlsArgs(ch store.Channel, outDir string) []string {
 	o = o.Normalize()
-	args := []string{"-hide_banner", "-nostdin", "-loglevel", "warning"}
+	// -progress 输出（走 stderr）被 Session 用来统计「源站投递速率」，
+	// 同时用 -nostats 关掉默认的统计行，避免刷屏。
+	args := []string{"-hide_banner", "-nostdin", "-loglevel", "warning", "-nostats", "-progress", "pipe:2"}
 	switch ch.Kind() {
 	case "rtsp":
 		args = append(args, "-rtsp_transport", o.Transport, "-timeout", "15000000")
@@ -114,8 +116,11 @@ func (o Options) hlsArgs(ch store.Channel, outDir string) []string {
 		args = append(args, "-rtmp_live", "live")
 	}
 	// 源站的时间戳会周期性倒退（实测日志：Non-monotonic DTS + RTP bad cseq），
-	// 后果是 HLS 分片时长变成 1 秒 / 11 秒混在一起，前端时间轴跟着乱、一直卡。
-	// 用数据到达时间重建单调时间轴可以根治（已做过 A/B 对比实测）。
+	// 后果是 HLS 分片时长变成 1 秒 / 十几秒混在一起，播放器时间轴跟着乱。
+	// TSFix 用数据到达时间重建单调时间轴，能治这种情况（已做过 A/B 对比）。
+	// 但它有个前提：源站得按实时投递。源站一旦限速/拥堵（实测遇到只有 0.3-0.5x
+	// 实时的情况），到达时间就不再等于媒体时间，整路会变成慢放。所以默认关闭，
+	// 只在确认源站时间戳坏掉、且源站投递正常时才打开。
 	if o.TSFix && ch.Kind() != "http" {
 		args = append(args, "-use_wallclock_as_timestamps", "1")
 	}

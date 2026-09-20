@@ -59,8 +59,8 @@ func Fields() []Field {
 		{Key: KeyFFmpegPath, Label: "ffmpeg 路径", Type: "text", Default: "ffmpeg", Hint: "留空或 ffmpeg 表示使用 PATH 中的版本；填绝对路径可指定自编译版本"},
 		{Key: KeyTransport, Label: "RTSP 传输方式", Type: "select", Default: "tcp", Options: []Opt{{"tcp", "TCP（推荐，稳定）"}, {"udp", "UDP（低延迟）"}}, Hint: "源站对 UDP 丢包敏感时选 TCP"},
 		{Key: KeyAudioMode, Label: "音频处理", Type: "select", Default: "aac", Options: []Opt{{"aac", "转成 AAC（浏览器兼容，推荐）"}, {"copy", "原样复制（零转码，但部分浏览器无法播放 MP2/AC3）"}}, Hint: "视频一律原样复制，不转码"},
-		{Key: KeyTSFix, Label: "时间戳修复（推荐开启）", Type: "bool", Default: "1",
-			Hint: "用数据到达时间重建单调时间轴。源站时间戳跳跃/倒退时，HLS 分片时长会变成 1 秒、十几秒混在一起，画面一直卡；开启后分片恢复稳定（实测有效）。只有源站本身就是突发式传输时才建议关掉"},
+		{Key: KeyTSFix, Label: "时间戳修复（源站时间戳倒退时才开）", Type: "bool", Default: "0",
+			Hint: "按数据到达时间重建时间轴，用来治源站时间戳周期性倒退（表现为分片时长忽 1 秒忽十几秒、画面一直卡）。前提是源站按实时投递：源站一旦限速/拥堵，整路会变成慢放（实测源站只有 0.3-0.5x 实时时会明显慢放），所以默认关闭。开启后「源站投递速率」恒显示 1.00x，判断限速请看码率百分比"},
 		{Key: KeySplitByTime, Label: "强制按分片时长切片", Type: "bool", Default: "0",
 			Hint: "不等关键帧、到点就切。源站关键帧间隔很长，或开启时间戳修复后分片仍然偏大（4-8 秒）时打开；代价是分片可能从非关键帧开始，刚进频道时可能有 1-2 秒花屏"},
 		{Key: KeyHLSTime, Label: "分片时长（秒）", Type: "int", Default: "2", Hint: "越小延迟越低，但请求更频繁；建议 2-4"},
@@ -184,7 +184,7 @@ func (v *Values) StreamOptions() stream.Options {
 	o.Max = v.Int(KeyMaxSessions, 8)
 	o.Extra = v.m[KeyExtraArgs]
 	o.ProbeTimeout = time.Duration(v.Int(KeyProbeTimeout, 15)) * time.Second
-	o.TSFix = v.Bool(KeyTSFix, true)
+	o.TSFix = v.Bool(KeyTSFix, false)
 	o.SplitByTime = v.Bool(KeySplitByTime, false)
 	return o.Normalize()
 }

@@ -27,7 +27,7 @@ import (
 	"tvhub/internal/webui"
 )
 
-const version = "1.0.0"
+const version = "1.1.0"
 
 func main() {
 	if err := run(); err != nil {
@@ -45,6 +45,7 @@ func run() error {
 		importFile = flag.String("import", "", "启动时导入该 m3u 文件（可作为频道的初始/增量来源）")
 		baseURL    = flag.String("base-url", envOr("TVHUB_BASE_URL", ""), "对外访问地址，如 http://192.168.1.10:8099，用于生成外部播放链接")
 		resetPW    = flag.Bool("reset-admin-password", false, "重置管理员密码后退出")
+		setKV      = flag.String("set", "", "写入设置项后退出，格式 key=value，多项用逗号分隔（键名见「参数设置」页）")
 		showVer    = flag.Bool("version", false, "显示版本后退出")
 		debug      = flag.Bool("debug", false, "打印调试日志")
 		ffmpegPath = flag.String("ffmpeg", envOr("TVHUB_FFMPEG", ""), "ffmpeg 路径（提供后会写入设置，命令行优先于面板）")
@@ -94,6 +95,10 @@ func run() error {
 
 	if *resetPW {
 		return resetAdminPassword(st, am, *adminUser)
+	}
+
+	if strings.TrimSpace(*setKV) != "" {
+		return applySettings(st, *setKV)
 	}
 
 	// 首次启动：创建管理员
@@ -272,6 +277,53 @@ func importPlaylistFile(st *store.Store, path string) error {
 		config.KeyM3USource:  "文件: " + filepath.Base(path),
 		config.KeyM3UApplied: time.Now().Format("2006-01-02 15:04:05"),
 	})
+}
+
+// applySettings 写入设置项后退出，便于脚本化运维（例如批量关掉某个开关）。
+func applySettings(st *store.Store, spec string) error {
+	types := map[string]string{}
+	for _, f := range config.Fields() {
+		types[f.Key] = f.Type
+	}
+	kv := map[string]string{}
+	var shown []string
+	for _, part := range strings.Split(spec, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		k, val, ok := strings.Cut(part, "=")
+		k = strings.TrimSpace(k)
+		if !ok || k == "" {
+			return fmt.Errorf("设置项格式应为 key=value：%s", part)
+		}
+		typ, known := types[k]
+		if !known {
+			return fmt.Errorf("未知设置项 %q（键名见「参数设置」页）", k)
+		}
+		val = strings.TrimSpace(val)
+		kv[k] = val
+		shown = append(shown, k+"="+maskValue(typ, val))
+	}
+	if len(kv) == 0 {
+		return errors.New("没有解析到任何设置项")
+	}
+	if err := st.SetSettings(kv); err != nil {
+		return err
+	}
+	fmt.Println("已写入设置：" + strings.Join(shown, ", "))
+	return nil
+}
+
+// maskValue 避免把密钥类设置项回显到终端/日志里。
+func maskValue(typ, val string) string {
+	if typ == "password" {
+		if val == "" {
+			return "(留空)"
+		}
+		return "***"
+	}
+	return val
 }
 
 func resetAdminPassword(st *store.Store, am *auth.Manager, adminUser string) error {

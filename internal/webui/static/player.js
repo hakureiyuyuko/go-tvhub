@@ -10,6 +10,7 @@
   const retryBtn = $('#retryBtn');
   const channelList = $('#channelList');
   const statusEl = $('#npMeta');
+  const srcWarn = $('#srcWarn');
 
   const state = {
     channels: [],
@@ -119,6 +120,25 @@
     retryBtn.classList.remove('hidden');
   }
 
+  // 源站投递速率告警：源站没按实时给数据时，画面必然变慢或卡顿，
+  // 这跟本地面板、浏览器都没关系，得明说，不要让大家去查错方向。
+  function updateSrcWarn(st) {
+    if (!srcWarn) { return; }
+    const rate = (st && typeof st.rate === 'number') ? st.rate : -1;
+    if (rate < 0 || rate >= 0.9) {
+      srcWarn.classList.add('hidden');
+      srcWarn.textContent = '';
+      return;
+    }
+    const fps = st.fps || 0;
+    const peak = st.peak_fps || 0;
+    const pct = (peak > 1 && fps > 0) ? Math.round(fps * 100 / peak) : 0;
+    srcWarn.textContent = '⚠ 源站投递不足：' + rate.toFixed(2) + 'x 实时' +
+      (pct ? '（帧率约为峰值的 ' + pct + '%）' : '') +
+      '，画面会变慢或卡顿。这是源站侧限速/拥堵，不是面板的问题。';
+    srcWarn.classList.remove('hidden');
+  }
+
   function setNow(ch) {
     $('#npName').textContent = ch ? ch.name : '未选择频道';
     statusEl.textContent = ch ? (ch.group || '') + (ch.kind ? ' · ' + ch.kind : '') : '';
@@ -126,6 +146,7 @@
 
   function destroyPlayer() {
     stopStatusPoll();
+    updateSrcWarn(null);
     if (state.hls) {
       try { state.hls.destroy(); } catch (e) { }
       state.hls = null;
@@ -228,6 +249,7 @@
           showError('转发失败：' + (st.error || '未知错误') + (st.log ? '\n' + st.log : ''));
           return;
         }
+        updateSrcWarn(st);
         if (state.current) {
           statusEl.textContent = (state.current.group || '') + ' · ' +
             (st.viewers > 1 ? st.viewers + ' 人观看 · ' : '') + humanTime(st.uptime_sec);
