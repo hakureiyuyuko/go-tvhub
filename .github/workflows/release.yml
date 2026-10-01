@@ -57,6 +57,8 @@ jobs:
     steps:
       # gh 需要 git 仓库上下文，缺了会报 "fatal: not a git repository"
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # 生成发布说明要能取到上一个 tag
 
       - uses: actions/download-artifact@v8
         with:
@@ -76,7 +78,19 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
+            # 直接推 commit 的仓库用 --generate-notes 只会得到一行 compare 链接，
+            # 所以自己拿「上一个 tag..本 tag」的 commit 标题当发布说明。
+            PREV=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+            if [ -n "$PREV" ]; then
+              RANGE="$PREV..$GITHUB_REF_NAME"
+              FOOT="**完整改动**：https://github.com/${{ github.repository }}/compare/$RANGE"
+            else
+              RANGE="$GITHUB_REF_NAME"
+              FOOT=""
+            fi
+            git log --no-merges --pretty=format:'- %s' "$RANGE" > /tmp/notes.md
+            printf '\n\n%s\n' "$FOOT" >> /tmp/notes.md
             gh release create "$GITHUB_REF_NAME" dist/* \
-              --title "$GITHUB_REF_NAME" \
-              --generate-notes
+              --title "tvhub $GITHUB_REF_NAME" \
+              --notes-file /tmp/notes.md
           fi
