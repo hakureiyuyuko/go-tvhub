@@ -24,6 +24,9 @@ import (
 	"tvhub/internal/store"
 )
 
+// codecSniffTimeout 是等 ffmpeg 打印源站编码的最长时间（一般连上后几百毫秒就有）。
+const codecSniffTimeout = 4 * time.Second
+
 // ErrTooMany 表示并发转发路数已达上限。
 var ErrTooMany = errors.New("服务器转发并发数已达上限，请稍后再试")
 
@@ -51,6 +54,11 @@ type Session struct {
 	logs *ringLog
 	rate *rateTracker
 
+	// 源站视频编码：Sniff 启动时从 ffmpeg 启动日志里认出（auto 模式据此决定要不要转码）
+	codecOnce sync.Once
+	codecVal  atomic.Value // string
+	codecSeen chan struct{}
+
 	// transcode 表示这一路是否在用显卡转码（UI 上要区分「源站限速」与「转码跟不上」）
 	transcode atomic.Bool
 
@@ -68,6 +76,7 @@ func newSession(root string, ch store.Channel) *Session {
 		exited:      make(chan struct{}),
 		logs:        newRingLog(80),
 		rate:        newRateTracker(10 * time.Second),
+		codecSeen:   make(chan struct{}),
 		clients:     map[string]time.Time{},
 	}
 }
@@ -136,9 +145,19 @@ func (s *Session) start(o Options) error {
 	cmd := exec.CommandContext(ctx, o.FFmpeg, args...)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = s.logs
-	// ffmpeg 的 -progress 行交给速率统计，其余（告警/报错）留在日志里
-	s.logs.onLine = s.rate.feed
-	s.transcode.Store(o.transcoding(ch))
+	// ffmpeg 的 -progress 行交给速率统计；启动信息里的 “Stream #0:0: Video: hevc” 用来认编码；
+	// 其余（告警/报错）留在日志里。
+	s.logs.onLine = func(line string) bool {
+		if s.rate.feed(line) {
+			return true
+		}
+		s.detectCodec(line)
+		return false
+	}
+	s.transcode.Store(o.Transcode(ch))
+	if c := strings.ToLower(strings.TrimSpace(o.SourceCodec)); c != "" {
+		s.codecVal.Store(c)
+	}
 	s.cmd = cmd
 	s.started = time.Now()
 	s.touch()
@@ -184,6 +203,42 @@ func (s *Session) waitReady(ctx context.Context, timeout time.Duration) error {
 		case <-tick.C:
 		}
 	}
+}
+
+// codecRe 从 ffmpeg 的启动信息中认出源站视频编码（输入段的 “Stream #0:0: Video: hevc …”）。
+var codecRe = regexp.MustCompile(`Stream #\d+:\d+.*: Video: ([A-Za-z0-9_]+)`)
+
+// detectCodec 解析一行日志，只认第一条（输入段在前，输出段也会打 Video:，不能覆盖）。
+func (s *Session) detectCodec(line string) {
+	m := codecRe.FindStringSubmatch(line)
+	if m == nil {
+		return
+	}
+	s.codecOnce.Do(func() {
+		s.codecVal.Store(strings.ToLower(m[1]))
+		close(s.codecSeen)
+	})
+}
+
+// waitCodec 等 ffmpeg 把源站编码打出来。
+func (s *Session) waitCodec(ctx context.Context, d time.Duration) (string, bool) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-s.codecSeen:
+		v, _ := s.codecVal.Load().(string)
+		return v, true
+	case <-s.exited:
+	case <-ctx.Done():
+	case <-t.C:
+	}
+	return "", false
+}
+
+// Codec 返回本路源站的视频编码（未知时空字符串）。
+func (s *Session) Codec() string {
+	v, _ := s.codecVal.Load().(string)
+	return v
 }
 
 func nonNil(err error) string {
@@ -293,6 +348,8 @@ type Stat struct {
 
 	// 这一路是否在用显卡转码（转码时速率偏低可能是显卡跟不上，而不是源站限速）。
 	Transcode bool `json:"transcode"`
+	// 源站视频编码（h264 / hevc / …），用来解释为什么转码。
+	Codec string `json:"codec,omitempty"`
 }
 
 // Stat 返回会话状态。
@@ -306,6 +363,7 @@ func (s *Session) Stat() Stat {
 		IdleSec:   int(time.Since(s.LastActive()).Seconds()),
 		Viewers:   s.Viewers(),
 		Transcode: s.transcode.Load(),
+		Codec:     s.Codec(),
 	}
 	switch {
 	case s.ready.Load():
@@ -352,6 +410,10 @@ type Manager struct {
 	log      *slog.Logger
 	stopCh   chan struct{}
 	stopOnce sync.Once
+
+	// codecCache 记住每个频道探明过的源站编码，避免每次点播都多连一次源站
+	codecMu sync.Mutex
+	codecs  map[int64]string
 }
 
 // NewManager 创建转发管理器，opts 每次取最新设置。
@@ -365,6 +427,7 @@ func NewManager(root string, opts func() Options, log *slog.Logger) *Manager {
 		opts:     opts,
 		log:      log,
 		stopCh:   make(chan struct{}),
+		codecs:   map[int64]string{},
 	}
 }
 
@@ -428,13 +491,32 @@ func (m *Manager) reap() {
 
 // Acquire 获取（必要时启动）某频道的转发会话。
 func (m *Manager) Acquire(ctx context.Context, ch store.Channel) (*Session, error) {
+	return m.acquireWith(ctx, ch, m.opts().Normalize())
+}
+
+// sourceCodecCached 返回以前探明的源站编码。
+func (m *Manager) sourceCodecCached(id int64) string {
+	m.codecMu.Lock()
+	defer m.codecMu.Unlock()
+	return m.codecs[id]
+}
+
+func (m *Manager) cacheSourceCodec(id int64, codec string) {
+	if codec == "" {
+		return
+	}
+	m.codecMu.Lock()
+	m.codecs[id] = codec
+	m.codecMu.Unlock()
+}
+
+func (m *Manager) acquireWith(ctx context.Context, ch store.Channel, o Options) (*Session, error) {
 	m.mu.Lock()
 	if s, ok := m.sessions[ch.ID]; ok && !s.isExited() {
 		s.touch()
 		m.mu.Unlock()
 		return s, nil
 	}
-	o := m.opts().Normalize()
 	var victim *Session
 	if len(m.sessions) >= o.Max {
 		// 淘汰最久没人看的会话；如果全都在活跃观看，就拒绝新请求
@@ -478,21 +560,47 @@ func (m *Manager) drop(id int64, s *Session) {
 }
 
 // Ready 启动并等待第一个分片就绪。
-func (m *Manager) Ready(ctx context.Context, ch store.Channel, timeout time.Duration) (*Session, error) {
-	s, err := m.Acquire(ctx, ch)
-	if err != nil {
-		return nil, err
-	}
-	if s.Ready() {
+// auto 模式下先搞清楚源站编码（缓存的 → 否则从 ffmpeg 启动日志里读）：
+// 浏览器放不了（HEVC 等）才改用硬件转码；能放就照旧直接复制。
+func (m *Manager) Ready(ctx context.Context, ch store.Channel, caps ClientCaps, timeout time.Duration) (*Session, error) {
+	codec := m.sourceCodecCached(ch.ID)
+	for round := 0; round < 2; round++ {
+		o := m.opts().Normalize()
+		o.SourceCodec = codec
+		o.ClientHEVC = caps.HEVC
+		o.Sniff = o.VideoMode == VideoModeAuto && codec == ""
+
+		s, err := m.acquireWith(ctx, ch, o)
+		if err != nil {
+			return nil, err
+		}
+		if o.Sniff {
+			if c, ok := s.waitCodec(ctx, codecSniffTimeout); ok {
+				m.cacheSourceCodec(ch.ID, c)
+				codec = c
+				o.SourceCodec = c
+				if o.Transcode(ch) {
+					// 编码要转码才能播：这一轮复制出来的流没用，停掉重来
+					m.log.Info("源站编码浏览器放不了，切硬件转码", "channel", ch.ID, "name", ch.Name, "codec", c)
+					m.Stop(ch.ID)
+					continue
+				}
+			} else {
+				m.log.Warn("没能从 ffmpeg 日志里认出源站编码，先按直接复制起", "channel", ch.ID)
+			}
+		}
+		if s.Ready() {
+			return s, nil
+		}
+		if err := s.waitReady(ctx, timeout); err != nil {
+			// 失败就丢弃会话，下次请求会重新拉起
+			m.drop(ch.ID, s)
+			s.close()
+			return nil, err
+		}
 		return s, nil
 	}
-	if err := s.waitReady(ctx, timeout); err != nil {
-		// 失败就丢弃会话，下次请求会重新拉起
-		m.drop(ch.ID, s)
-		s.close()
-		return nil, err
-	}
-	return s, nil
+	return nil, errors.New("启动转发失败：切到硬件转码后仍未就绪")
 }
 
 // Get 返回已存在的会话。

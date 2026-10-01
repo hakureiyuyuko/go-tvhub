@@ -12,6 +12,20 @@
   const statusEl = $('#npMeta');
   const srcWarn = $('#srcWarn');
 
+  // 浏览器能不能直接放 HEVC：Safari/iOS（原生 HLS）能，Chrome/Firefox 的 MSE 不能。
+  // 能放就告诉服务端，HEVC 频道就不必转码（省显卡）；不能放则由服务端自动切硬件转码。
+  const canPlayHEVC = (function () {
+    try {
+      if (window.MediaSource && window.MediaSource.isTypeSupported &&
+        (window.MediaSource.isTypeSupported('video/mp4; codecs="hvc1.1.6.L123.B0"') ||
+          window.MediaSource.isTypeSupported('video/mp4; codecs="hev1.1.6.L123.B0"'))) {
+        return true;
+      }
+      if (video.canPlayType('application/vnd.apple.mpegurl')) { return true; } // 原生 HLS 一般自带 HEVC
+      return !!video.canPlayType('video/mp4; codecs="hvc1.1.6.L123.B0"');
+    } catch (e) { return false; }
+  })();
+
   const state = {
     channels: [],
     favs: new Set(),
@@ -175,7 +189,7 @@
       if (s >= 2) { overlayHint.textContent = '已等待 ' + s + ' 秒…'; }
     }, 1000);
     try {
-      const r = await postJSON('/api/stream/' + ch.id + '/prepare');
+      const r = await postJSON('/api/stream/' + ch.id + '/prepare' + (canPlayHEVC ? '?cap=hevc' : ''));
       clearInterval(state.waitTimer);
       if (!r || r.state !== 'ready') {
         showError('无法播放该频道\n' + ((r && r.error) || '转发失败'));
@@ -190,6 +204,11 @@
 
   function attach(r, ch) {
     state.mode = r.method;
+    state.transcode = !!r.transcode;
+    if (r.transcode) {
+      state.codec = r.codec || '';
+      statusEl.textContent = [ch.group || '', '硬件转码 H.264' + (state.codec ? '（源站 ' + state.codec + '）' : '')].filter(Boolean).join(' · ');
+    }
     if (r.method === 'proxy') {
       video.src = r.playlist;
       video.play().catch(function () { });
@@ -256,8 +275,11 @@
         }
         updateSrcWarn(st);
         if (state.current) {
-          statusEl.textContent = (state.current.group || '') + ' · ' +
-            (st.viewers > 1 ? st.viewers + ' 人观看 · ' : '') + humanTime(st.uptime_sec);
+          const parts = [state.current.group || ''];
+          if (st.transcode) { parts.push('硬件转码 H.264' + (st.codec ? '（源站 ' + st.codec + '）' : '')); }
+          if (st.viewers > 1) { parts.push(st.viewers + ' 人观看'); }
+          parts.push(humanTime(st.uptime_sec));
+          statusEl.textContent = parts.filter(Boolean).join(' · ');
         }
       } catch (e) { /* 忽略轮询错误 */ }
     }, 10000);

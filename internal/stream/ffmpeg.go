@@ -22,19 +22,29 @@ const defaultProbeTimeout = 15 * time.Second
 
 // 视频处理模式。
 const (
-	VideoModeCopy  = "copy"  // 原样复制（默认，最省资源）
-	VideoModeVAAPI = "vaapi" // 用显卡转码成 H.264（浏览器放不了 HEVC/AV1 时用）
+	VideoModeAuto = "auto" // 自动（默认）：只有浏览器放不了的编码才转码
+	VideoModeCopy = "copy" // 从不转码，全部直接复制
+	VideoModeAll  = "all"  // 全部转码（调试或特殊源用）
 )
+
+// ClientCaps 是播放端声明的能力。
+// 面板前端会告诉服务端它能不能直接放 HEVC（Safari / 电视盒子可以，Chrome/Firefox 不行）。
+type ClientCaps struct {
+	HEVC bool
+}
 
 // Options 是转发进程的运行时参数，由面板设置派生。
 type Options struct {
 	FFmpeg          string        // ffmpeg 可执行文件路径
 	Transport       string        // RTSP 传输方式：tcp / udp
 	AudioMode       string        // aac：音频转 AAC（浏览器兼容）；copy：音频直通
-	VideoMode       string        // copy：视频直通；vaapi：显卡转码成 H.264
+	VideoMode       string        // auto / copy / all
 	TranscodeHeight int           // 转码输出高度，0 = 保持原分辨率
 	TranscodeQP     int           // 转码 CQP 质量（越小越好）
 	VAAPIDevice     string        // 显卡渲染节点，如 /dev/dri/renderD128
+	SourceCodec     string        // 源站视频编码（会话探明后填入，auto 模式据此判断）
+	ClientHEVC      bool          // 播放端声明能放 HEVC
+	Sniff           bool          // 本次启动是为了探明源站编码（日志调到 info）
 	HLSTime         int           // 分片时长（秒）
 	HLSList         int           // 播放列表保留分片数
 	Idle            time.Duration // 无观众后多久停止
@@ -51,7 +61,7 @@ func DefaultOptions() Options {
 		FFmpeg:          "ffmpeg",
 		Transport:       "tcp",
 		AudioMode:       "aac",
-		VideoMode:       VideoModeCopy,
+		VideoMode:       VideoModeAuto,
 		TranscodeHeight: 1080,
 		TranscodeQP:     26,
 		VAAPIDevice:     "/dev/dri/renderD128",
@@ -63,8 +73,47 @@ func DefaultOptions() Options {
 	}
 }
 
-// Transcode 表示是否需要把视频转成 H.264（显卡 VAAPI）。
-func (o Options) Transcode() bool { return o.VideoMode == VideoModeVAAPI }
+// Transcode 判断这一路是否要用显卡转码成 H.264。
+// auto（默认）：源站是 H.264 就照旧直接复制；是 HEVC 这类浏览器放不了的编码才转码；
+// 播放端自己声明能放 HEVC（Safari、电视盒子、VLC）时，HEVC 也不转。
+func (o Options) Transcode(ch store.Channel) bool {
+	if ch.Kind() == "http" { // HTTP 源走反向代理，不过 ffmpeg
+		return false
+	}
+	switch o.VideoMode {
+	case VideoModeAll:
+		return true
+	case VideoModeCopy:
+		return false
+	}
+	codec := strings.ToLower(strings.TrimSpace(o.SourceCodec))
+	if codec == "" { // 还没探明：先按复制起，Ready 会探完再决定要不要重来
+		return false
+	}
+	if o.ClientHEVC && isHEVC(codec) {
+		return false
+	}
+	return !browserPlayable(codec)
+}
+
+func isHEVC(codec string) bool {
+	switch codec {
+	case "hevc", "h265", "hvc1", "hev1":
+		return true
+	}
+	return false
+}
+
+// browserPlayable 判断浏览器（MSE）能不能直接放这个编码。
+// 实测 Chrome/Firefox 的 MSE 只靠得住 H.264；HEVC/AV1/MPEG-2/VC-1 等一律放不了，
+// 所以白名单只留 H.264（多转一次总比黑屏好）。
+func browserPlayable(codec string) bool {
+	switch codec {
+	case "h264", "avc1", "avc":
+		return true
+	}
+	return false
+}
 
 // Normalize 修正非法取值。
 func (o Options) Normalize() Options {
@@ -107,8 +156,11 @@ func (o Options) Normalize() Options {
 	if o.ProbeTimeout < 3*time.Second || o.ProbeTimeout > 60*time.Second {
 		o.ProbeTimeout = 15 * time.Second
 	}
-	if o.VideoMode != VideoModeVAAPI && o.VideoMode != VideoModeCopy {
-		o.VideoMode = VideoModeCopy
+	if o.VideoMode == "vaapi" { // 兼容旧设置值
+		o.VideoMode = VideoModeAll
+	}
+	if o.VideoMode != VideoModeAuto && o.VideoMode != VideoModeCopy && o.VideoMode != VideoModeAll {
+		o.VideoMode = VideoModeAuto
 	}
 	return o
 }
@@ -134,12 +186,18 @@ func exeSuffix() string {
 	return ""
 }
 
-// hlsArgs 构造 HLS 转发命令：视频流原样复制，不转码。
+// hlsArgs 构造 HLS 转发命令：默认视频流原样复制，auto 模式下源站是浏览器放不了的
+// 编码（HEVC 等）时改成显卡硬件转码。
 func (o Options) hlsArgs(ch store.Channel, outDir string) []string {
 	o = o.Normalize()
 	// -progress 输出（走 stderr）被 Session 用来统计「源站投递速率」，
 	// 同时用 -nostats 关掉默认的统计行，避免刷屏。
-	args := []string{"-hide_banner", "-nostdin", "-loglevel", "warning", "-nostats", "-progress", "pipe:2"}
+	// 探编码（Sniff）时把日志提到 info，好从启动信息里读到 “Stream #0:0: Video: xxx”。
+	level := "warning"
+	if o.Sniff {
+		level = "info"
+	}
+	args := []string{"-hide_banner", "-nostdin", "-loglevel", level, "-nostats", "-progress", "pipe:2"}
 	switch ch.Kind() {
 	case "rtsp":
 		args = append(args, "-rtsp_transport", o.Transport, "-timeout", "15000000")
@@ -155,8 +213,8 @@ func (o Options) hlsArgs(ch store.Channel, outDir string) []string {
 	if o.TSFix && ch.Kind() != "http" {
 		args = append(args, "-use_wallclock_as_timestamps", "1")
 	}
-	// 硬件转码：解码与编码都走显卡（4K HEVC 用软件解码在 2 核容器里拉不动）
-	if o.transcoding(ch) {
+	// 需要转码时：解码与编码都走显卡（4K HEVC 用软件解码在 2 核容器里拉不动）
+	if o.Transcode(ch) {
 		args = append(args, "-vaapi_device", o.VAAPIDevice,
 			"-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi")
 	}
@@ -167,7 +225,7 @@ func (o Options) hlsArgs(ch store.Channel, outDir string) []string {
 	args = append(args, "-i", ch.URL)
 	// 只取第一条视频/音频，丢弃数据、字幕等轨道（IPTV 里常见，会拖坏 HLS）
 	args = append(args, "-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn")
-	if o.transcoding(ch) {
+	if o.Transcode(ch) {
 		args = append(args, "-vf", o.vaapiFilter(), "-c:v", "h264_vaapi",
 			"-rc_mode", "CQP", "-qp", strconv.Itoa(o.TranscodeQP))
 	} else {
@@ -197,11 +255,6 @@ func (o Options) hlsFlags() string {
 		f += "+split_by_time"
 	}
 	return f
-}
-
-// transcoding 表示当前源是否要用显卡转码（HTTP 源走反代，不经过 ffmpeg）。
-func (o Options) transcoding(ch store.Channel) bool {
-	return o.Transcode() && ch.Kind() != "http"
 }
 
 // vaapiFilter 构造 VAAPI 滤镜链：把帧转成编码器要的 nv12（10bit 源会在这里降到 8bit），

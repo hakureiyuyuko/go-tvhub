@@ -81,7 +81,10 @@ func (s *Server) apiPrepare(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
 	defer cancel()
-	sess, err := s.mgr.Ready(ctx, *ch, 30*time.Second)
+	// 播放端可以声明自己能不能直接放 HEVC（Safari / 盒子 / VLC 能，Chrome/Firefox 不能），
+	// 声明能放的话 HEVC 频道就不必转码。
+	caps := stream.ClientCaps{HEVC: r.URL.Query().Get("cap") == "hevc"}
+	sess, err := s.mgr.Ready(ctx, *ch, caps, 30*time.Second)
 	if err != nil {
 		s.log.Warn("启动转发失败", "channel", ch.ID, "name", ch.Name, "err", err)
 		resp["state"] = "error"
@@ -92,6 +95,8 @@ func (s *Server) apiPrepare(w http.ResponseWriter, r *http.Request) {
 	resp["method"] = "hls"
 	resp["playlist"] = fmt.Sprintf("/stream/%d/index.m3u8", ch.ID)
 	resp["viewers"] = sess.Viewers()
+	resp["transcode"] = sess.Stat().Transcode
+	resp["codec"] = sess.Codec()
 	writeJSON(w, http.StatusOK, resp)
 }
 
