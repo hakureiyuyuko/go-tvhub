@@ -51,6 +51,9 @@ type Session struct {
 	logs *ringLog
 	rate *rateTracker
 
+	// transcode 表示这一路是否在用显卡转码（UI 上要区分「源站限速」与「转码跟不上」）
+	transcode atomic.Bool
+
 	mu      sync.Mutex
 	clients map[string]time.Time
 }
@@ -135,6 +138,7 @@ func (s *Session) start(o Options) error {
 	cmd.Stderr = s.logs
 	// ffmpeg 的 -progress 行交给速率统计，其余（告警/报错）留在日志里
 	s.logs.onLine = s.rate.feed
+	s.transcode.Store(o.transcoding(ch))
 	s.cmd = cmd
 	s.started = time.Now()
 	s.touch()
@@ -286,6 +290,9 @@ type Stat struct {
 	// 窗口内 mux 出的帧率及其峰值；与时间戳模式无关，可做交叉验证。
 	FPS     float64 `json:"fps"`
 	PeakFPS float64 `json:"peak_fps"`
+
+	// 这一路是否在用显卡转码（转码时速率偏低可能是显卡跟不上，而不是源站限速）。
+	Transcode bool `json:"transcode"`
 }
 
 // Stat 返回会话状态。
@@ -298,6 +305,7 @@ func (s *Session) Stat() Stat {
 		UptimeSec: int(time.Since(s.started).Seconds()),
 		IdleSec:   int(time.Since(s.LastActive()).Seconds()),
 		Viewers:   s.Viewers(),
+		Transcode: s.transcode.Load(),
 	}
 	switch {
 	case s.ready.Load():

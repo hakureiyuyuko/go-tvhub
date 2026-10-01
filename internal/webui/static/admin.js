@@ -62,19 +62,21 @@
   }
 
   // rateCell：源站投递速率。小于 1 说明源站没按实时给数据，
-  // 播放端必然变慢或卡顿，属于源站侧限速/拥堵，面板补不出来。
+  // 播放端必然变慢或卡顿；转码模式下也可能是显卡跟不上。
   function rateCell(s) {
     const rate = (typeof s.rate === 'number') ? s.rate : -1;
     const fps = s.fps || 0;
     const peak = s.peak_fps || 0;
     const pct = (peak > 1 && fps > 0) ? Math.round(fps * 100 / peak) : 0;
-    const tip = '窗口帧率 ' + fps.toFixed(1) + ' 帧/秒，本会话峰值 ' + peak.toFixed(1) + ' 帧/秒' +
-      (pct ? '（约 ' + pct + '%）' : '') + '。低于 0.9x 说明源站在限速或拥堵';
-    if (rate < 0) { return '<span class="muted">—</span>'; }
+    const tc = s.transcode ? '<span class="badge on" title="这一路在用显卡转成 H.264">转码</span> ' : '';
+    const tip = (s.transcode ? '本路正在硬件转码；' : '') + '窗口帧率 ' + fps.toFixed(1) + ' 帧/秒，本会话峰值 ' + peak.toFixed(1) + ' 帧/秒' +
+      (pct ? '（约 ' + pct + '%）' : '') + '。低于 0.9x 说明源站在限速或拥堵' +
+      (s.transcode ? '，或者是本机转码跟不上' : '');
+    if (rate < 0) { return tc + '<span class="muted">—</span>'; }
     let cls = 'ok';
     if (rate < 0.6) { cls = 'err'; } else if (rate < 0.9) { cls = 'warn'; }
     const note = (pct && pct < 95) ? '帧率 ' + pct + '%' : '';
-    return '<span class="badge ' + cls + '" title="' + esc(tip) + '">' + rate.toFixed(2) + 'x</span>' +
+    return tc + '<span class="badge ' + cls + '" title="' + esc(tip) + '">' + rate.toFixed(2) + 'x</span>' +
       (note ? '<div class="muted rate-note">' + note + '</div>' : '');
   }
 

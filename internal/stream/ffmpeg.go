@@ -20,35 +20,51 @@ import (
 // probeTimeout 是单次 ffprobe 探测的超时（批量探测时也用它）。
 const defaultProbeTimeout = 15 * time.Second
 
+// 视频处理模式。
+const (
+	VideoModeCopy  = "copy"  // 原样复制（默认，最省资源）
+	VideoModeVAAPI = "vaapi" // 用显卡转码成 H.264（浏览器放不了 HEVC/AV1 时用）
+)
+
 // Options 是转发进程的运行时参数，由面板设置派生。
 type Options struct {
-	FFmpeg       string        // ffmpeg 可执行文件路径
-	Transport    string        // RTSP 传输方式：tcp / udp
-	AudioMode    string        // aac：音频转 AAC（浏览器兼容）；copy：音频直通
-	HLSTime      int           // 分片时长（秒）
-	HLSList      int           // 播放列表保留分片数
-	Idle         time.Duration // 无观众后多久停止
-	Max          int           // 最大并发转发路数
-	Extra        string        // 追加的 ffmpeg 参数
-	TSFix        bool          // 用到达时间重建单调时间轴（治源站时间戳跳跃）
-	SplitByTime  bool          // 强制到点就切，不等关键帧
-	ProbeTimeout time.Duration // 单次 ffprobe 探测超时
+	FFmpeg          string        // ffmpeg 可执行文件路径
+	Transport       string        // RTSP 传输方式：tcp / udp
+	AudioMode       string        // aac：音频转 AAC（浏览器兼容）；copy：音频直通
+	VideoMode       string        // copy：视频直通；vaapi：显卡转码成 H.264
+	TranscodeHeight int           // 转码输出高度，0 = 保持原分辨率
+	TranscodeQP     int           // 转码 CQP 质量（越小越好）
+	VAAPIDevice     string        // 显卡渲染节点，如 /dev/dri/renderD128
+	HLSTime         int           // 分片时长（秒）
+	HLSList         int           // 播放列表保留分片数
+	Idle            time.Duration // 无观众后多久停止
+	Max             int           // 最大并发转发路数
+	Extra           string        // 追加的 ffmpeg 参数
+	TSFix           bool          // 用到达时间重建单调时间轴（治源站时间戳跳跃）
+	SplitByTime     bool          // 强制到点就切，不等关键帧
+	ProbeTimeout    time.Duration // 单次 ffprobe 探测超时
 }
 
 // DefaultOptions 返回默认参数。
 func DefaultOptions() Options {
 	return Options{
-		FFmpeg:       "ffmpeg",
-		Transport:    "tcp",
-		AudioMode:    "aac",
-		HLSTime:      2,
-		HLSList:      6,
-		Idle:         45 * time.Second,
-		Max:          8,
-		TSFix:        false,
-		ProbeTimeout: 15 * time.Second,
+		FFmpeg:          "ffmpeg",
+		Transport:       "tcp",
+		AudioMode:       "aac",
+		VideoMode:       VideoModeCopy,
+		TranscodeHeight: 1080,
+		TranscodeQP:     26,
+		VAAPIDevice:     "/dev/dri/renderD128",
+		HLSTime:         2,
+		HLSList:         6,
+		Idle:            45 * time.Second,
+		Max:             8,
+		ProbeTimeout:    15 * time.Second,
 	}
 }
+
+// Transcode 表示是否需要把视频转成 H.264（显卡 VAAPI）。
+func (o Options) Transcode() bool { return o.VideoMode == VideoModeVAAPI }
 
 // Normalize 修正非法取值。
 func (o Options) Normalize() Options {
@@ -76,8 +92,23 @@ func (o Options) Normalize() Options {
 	if o.Max > 64 {
 		o.Max = 64
 	}
+	if o.TranscodeHeight < 0 || o.TranscodeHeight > 4320 {
+		o.TranscodeHeight = 1080
+	}
+	if o.TranscodeHeight > 0 && o.TranscodeHeight%2 != 0 { // H.264 要求偶数尺寸
+		o.TranscodeHeight--
+	}
+	if o.TranscodeQP < 14 || o.TranscodeQP > 40 {
+		o.TranscodeQP = 26
+	}
+	if o.VAAPIDevice == "" {
+		o.VAAPIDevice = "/dev/dri/renderD128"
+	}
 	if o.ProbeTimeout < 3*time.Second || o.ProbeTimeout > 60*time.Second {
 		o.ProbeTimeout = 15 * time.Second
+	}
+	if o.VideoMode != VideoModeVAAPI && o.VideoMode != VideoModeCopy {
+		o.VideoMode = VideoModeCopy
 	}
 	return o
 }
@@ -124,13 +155,24 @@ func (o Options) hlsArgs(ch store.Channel, outDir string) []string {
 	if o.TSFix && ch.Kind() != "http" {
 		args = append(args, "-use_wallclock_as_timestamps", "1")
 	}
+	// 硬件转码：解码与编码都走显卡（4K HEVC 用软件解码在 2 核容器里拉不动）
+	if o.transcoding(ch) {
+		args = append(args, "-vaapi_device", o.VAAPIDevice,
+			"-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi")
+	}
 	if h := strings.TrimSpace(ch.Headers); h != "" {
 		args = append(args, "-headers", h)
 	}
 	args = append(args, splitArgs(o.Extra)...)
 	args = append(args, "-i", ch.URL)
 	// 只取第一条视频/音频，丢弃数据、字幕等轨道（IPTV 里常见，会拖坏 HLS）
-	args = append(args, "-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn", "-c:v", "copy")
+	args = append(args, "-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn")
+	if o.transcoding(ch) {
+		args = append(args, "-vf", o.vaapiFilter(), "-c:v", "h264_vaapi",
+			"-rc_mode", "CQP", "-qp", strconv.Itoa(o.TranscodeQP))
+	} else {
+		args = append(args, "-c:v", "copy")
+	}
 	if o.AudioMode == "copy" {
 		args = append(args, "-c:a", "copy")
 	} else {
@@ -155,6 +197,22 @@ func (o Options) hlsFlags() string {
 		f += "+split_by_time"
 	}
 	return f
+}
+
+// transcoding 表示当前源是否要用显卡转码（HTTP 源走反代，不经过 ffmpeg）。
+func (o Options) transcoding(ch store.Channel) bool {
+	return o.Transcode() && ch.Kind() != "http"
+}
+
+// vaapiFilter 构造 VAAPI 滤镜链：把帧转成编码器要的 nv12（10bit 源会在这里降到 8bit），
+// 并按需等比缩放。这里不做 HDR 色调映射，HLG/PQ 源转出来颜色会偏灰。
+func (o Options) vaapiFilter() string {
+	h := o.TranscodeHeight
+	if h <= 0 {
+		return "scale_vaapi=format=nv12"
+	}
+	// w = iw*h/ih，向下取整到偶数（H.264 要求偶数尺寸）
+	return fmt.Sprintf("scale_vaapi=w=trunc(iw*%d/ih/2)*2:h=%d:format=nv12", h, h)
 }
 
 // probeArgs 构造 ffprobe 命令。

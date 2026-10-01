@@ -27,7 +27,7 @@ import (
 	"tvhub/internal/webui"
 )
 
-const version = "1.1.0"
+const version = "1.2.0"
 
 func main() {
 	if err := run(); err != nil {

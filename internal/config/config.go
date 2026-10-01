@@ -21,6 +21,10 @@ const (
 	KeyTSFix         = "ts_fix"
 	KeySplitByTime   = "hls_split_by_time"
 	KeyAudioMode     = "audio_mode"
+	KeyVideoMode     = "video_mode"
+	KeyTransHeight   = "transcode_height"
+	KeyTransQP       = "transcode_qp"
+	KeyVAAPIDevice   = "vaapi_device"
 	KeyHLSTime       = "hls_time"
 	KeyHLSListSize   = "hls_list_size"
 	KeyIdleSeconds   = "idle_seconds"
@@ -58,7 +62,15 @@ func Fields() []Field {
 		{Key: KeySiteTitle, Label: "站点标题", Type: "text", Default: "家庭电视", Hint: "显示在页面标题和播放器顶部"},
 		{Key: KeyFFmpegPath, Label: "ffmpeg 路径", Type: "text", Default: "ffmpeg", Hint: "留空或 ffmpeg 表示使用 PATH 中的版本；填绝对路径可指定自编译版本"},
 		{Key: KeyTransport, Label: "RTSP 传输方式", Type: "select", Default: "tcp", Options: []Opt{{"tcp", "TCP（推荐，稳定）"}, {"udp", "UDP（低延迟）"}}, Hint: "源站对 UDP 丢包敏感时选 TCP"},
-		{Key: KeyAudioMode, Label: "音频处理", Type: "select", Default: "aac", Options: []Opt{{"aac", "转成 AAC（浏览器兼容，推荐）"}, {"copy", "原样复制（零转码，但部分浏览器无法播放 MP2/AC3）"}}, Hint: "视频一律原样复制，不转码"},
+		{Key: KeyAudioMode, Label: "音频处理", Type: "select", Default: "aac", Options: []Opt{{"aac", "转成 AAC（浏览器兼容，推荐）"}, {"copy", "原样复制（零转码，但部分浏览器无法播放 MP2/AC3）"}}, Hint: "视频是否转码由下面的「视频处理」决定"},
+		{Key: KeyVideoMode, Label: "视频处理", Type: "select", Default: "copy", Options: []Opt{{"copy", "直接复制（不转码，最省资源）"}, {"vaapi", "硬件转码 → H.264（显卡 VAAPI）"}},
+			Hint: "源站是 HEVC/AV1 或 4K 时浏览器（MSE）放不了原流，选「硬件转码」让显卡实时转成 H.264。1080p H.264 的普通频道不需要开。开启前要先确认容器里能看到 /dev/dri/renderD128（vainfo 有输出），做法见 README「显卡硬件转码」"},
+		{Key: KeyTransHeight, Label: "转码输出高度", Type: "int", Default: "1080",
+			Hint: "0 = 保持原分辨率；4K 源压到 1080 最省显卡。本机 AMD 核显实测（合成测试片）：4K HEVC10 → 1080p ≈2.4x 实时，4K → 4K ≈1.7x 实时，真实高码率内容会更低"},
+		{Key: KeyTransQP, Label: "转码质量 QP", Type: "int", Default: "26",
+			Hint: "CQP 模式，越小画质越好、越吃显卡，常用 20-28"},
+		{Key: KeyVAAPIDevice, Label: "VAAPI 设备", Type: "text", Default: "/dev/dri/renderD128",
+			Hint: "容器里的显卡渲染节点；vainfo 能正常输出就说明这个路径可用"},
 		{Key: KeyTSFix, Label: "时间戳修复（源站时间戳倒退时才开）", Type: "bool", Default: "0",
 			Hint: "按数据到达时间重建时间轴，用来治源站时间戳周期性倒退（表现为分片时长忽 1 秒忽十几秒、画面一直卡）。前提是源站按实时投递：源站一旦限速/拥堵，整路会变成慢放（实测源站只有 0.3-0.5x 实时时会明显慢放），所以默认关闭。开启后「源站投递速率」恒显示 1.00x，判断限速请看码率百分比"},
 		{Key: KeySplitByTime, Label: "强制按分片时长切片", Type: "bool", Default: "0",
@@ -178,6 +190,10 @@ func (v *Values) StreamOptions() stream.Options {
 	}
 	o.Transport = strings.ToLower(strings.TrimSpace(v.m[KeyTransport]))
 	o.AudioMode = strings.ToLower(strings.TrimSpace(v.m[KeyAudioMode]))
+	o.VideoMode = strings.ToLower(strings.TrimSpace(v.m[KeyVideoMode]))
+	o.TranscodeHeight = v.Int(KeyTransHeight, 1080)
+	o.TranscodeQP = v.Int(KeyTransQP, 26)
+	o.VAAPIDevice = strings.TrimSpace(v.m[KeyVAAPIDevice])
 	o.HLSTime = v.Int(KeyHLSTime, 2)
 	o.HLSList = v.Int(KeyHLSListSize, 6)
 	o.Idle = time.Duration(v.Int(KeyIdleSeconds, 45)) * time.Second
