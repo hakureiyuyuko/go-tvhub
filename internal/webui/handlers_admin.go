@@ -347,18 +347,20 @@ func (s *Server) apiAdminChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type item struct {
-		ID        int64  `json:"id"`
-		Name      string `json:"name"`
-		Group     string `json:"group"`
-		URL       string `json:"url"`
-		Kind      string `json:"kind"`
-		Disabled  bool   `json:"disabled"`
-		Probe     string `json:"probe"`
-		SortOrder int    `json:"sort_order"`
+		ID           int64  `json:"id"`
+		Name         string `json:"name"`
+		Group        string `json:"group"`
+		URL          string `json:"url"`
+		Kind         string `json:"kind"`
+		Disabled     bool   `json:"disabled"`
+		DisabledAuto bool   `json:"disabled_auto"`
+		Probe        string `json:"probe"`
+		SortOrder    int    `json:"sort_order"`
 	}
 	out := make([]item, 0, len(list))
 	for _, c := range list {
-		it := item{ID: c.ID, Name: c.Name, Group: c.Group, URL: c.URL, Kind: stream.KindLabel(c.URL), Disabled: c.Disabled, Probe: c.Probe, SortOrder: c.SortOrder}
+		it := item{ID: c.ID, Name: c.Name, Group: c.Group, URL: c.URL, Kind: stream.KindLabel(c.URL),
+			Disabled: c.Disabled, DisabledAuto: c.DisabledAuto, Probe: c.Probe, SortOrder: c.SortOrder}
 		out = append(out, it)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"channels": out})
@@ -435,7 +437,7 @@ func (s *Server) importM3U(content, sourceName string) (res importSummary, err e
 	if len(entries) == 0 {
 		return res, errors.New("没有解析到任何频道，请检查文件格式（需要 #EXTM3U / #EXTINF）")
 	}
-	out, err := s.st.ImportChannels(entries)
+	out, err := s.st.ImportChannels(entries, true) // 用户主动导入：探测失败被自动停用的频道恢复启用
 	if err != nil {
 		return res, err
 	}
@@ -450,19 +452,21 @@ func (s *Server) importM3U(content, sourceName string) (res importSummary, err e
 	s.InvalidateConfig()
 	res = importSummary{
 		Added: out.Added, Updated: out.Updated, Removed: out.Removed,
-		Total: out.Total, Kept: out.Kept, Source: sourceName,
+		Total: out.Total, Kept: out.Kept, Reenabled: out.Reenabled, Source: sourceName,
 	}
-	s.log.Info("导入播放列表", "source", sourceName, "added", out.Added, "updated", out.Updated, "removed", out.Removed)
+	s.log.Info("导入播放列表", "source", sourceName, "added", out.Added, "updated", out.Updated,
+		"removed", out.Removed, "恢复启用", out.Reenabled)
 	return res, nil
 }
 
 type importSummary struct {
-	Added   int    `json:"added"`
-	Updated int    `json:"updated"`
-	Removed int    `json:"removed"`
-	Kept    int    `json:"kept"`
-	Total   int    `json:"total"`
-	Source  string `json:"source"`
+	Added     int    `json:"added"`
+	Updated   int    `json:"updated"`
+	Removed   int    `json:"removed"`
+	Kept      int    `json:"kept"`
+	Total     int    `json:"total"`
+	Reenabled int    `json:"reenabled"`
+	Source    string `json:"source"`
 }
 
 func (s *Server) apiM3USave(w http.ResponseWriter, r *http.Request) {
@@ -636,6 +640,19 @@ func (s *Server) apiDisableFailed(w http.ResponseWriter, r *http.Request) {
 		s.log.Info("批量停用探测失败的频道", "count", n, "by", userOf(r).Username)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "disabled": n})
+}
+
+// apiEnableAllDisabled 把所有停用的频道恢复启用（用户主动点的一键恢复）。
+func (s *Server) apiEnableAllDisabled(w http.ResponseWriter, r *http.Request) {
+	n, err := s.st.EnableAllDisabled()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if n > 0 {
+		s.log.Info("批量恢复启用频道", "count", n, "by", userOf(r).Username)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "enabled": n})
 }
 
 func (s *Server) apiKillSession(w http.ResponseWriter, r *http.Request) {

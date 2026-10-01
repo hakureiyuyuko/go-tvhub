@@ -207,7 +207,8 @@
     const el = $('#m3uResult');
     el.className = 'alert ok';
     el.textContent = label + '：共 ' + r.total + ' 个频道，新增 ' + r.added + '，更新 ' + r.updated +
-      '，删除 ' + r.removed + '，保持不变 ' + r.kept + '。';
+      '，删除 ' + r.removed + '，保持不变 ' + r.kept +
+      (r.reenabled ? '；已自动恢复启用 ' + r.reenabled + ' 个之前探测失败被停用的频道' : '') + '。';
     setTimeout(function () { el.classList.add('hidden'); }, 12000);
   }
 
@@ -283,7 +284,8 @@
         (st.current ? ' · 当前：' + st.current : '');
     } else {
       text = (st.cancelled ? '已取消：' : '探测完成：') + '共 ' + st.total + ' 个，可用 ' + st.ok + '，失败 ' + st.failed +
-        (st.disabled ? '，已自动停用 ' + st.disabled + ' 个' : '') + '（' + (st.finished_at || '') + '）';
+        (st.disabled ? '，已自动停用 ' + st.disabled + ' 个' : '') +
+        (st.enabled ? '，已自动恢复启用 ' + st.enabled + ' 个' : '') + '（' + (st.finished_at || '') + '）';
     }
     $('#probeText').textContent = text;
     const names = st.failed_names || [];
@@ -349,6 +351,15 @@
     } catch (e) { toast(e.message, 'err'); }
   });
 
+  $('#enableAllDisabled').addEventListener('click', async function () {
+    if (!confirm('把所有被停用的频道一次性恢复启用？（包括你手动停用的）')) { return; }
+    try {
+      const r = await postJSON('/admin/api/channels/enable-all');
+      toast(r.enabled ? ('已恢复启用 ' + r.enabled + ' 个频道') : '没有停用中的频道', r.enabled ? 'ok' : '');
+      loadChannelsTab();
+    } catch (e) { toast(e.message, 'err'); }
+  });
+
   function renderChannels() {
     const q = ($('#chanSearch').value || '').trim().toLowerCase();
     const list = channelsCache.filter(function (c) {
@@ -356,7 +367,9 @@
       return (c.name + ' ' + c.group + ' ' + c.url).toLowerCase().indexOf(q) >= 0;
     });
     const rows = list.map(function (c) {
-      const st = c.disabled ? '<span class="badge err">停用</span>' : '<span class="badge ok">启用</span>';
+      const st = c.disabled
+        ? '<span class="badge err">停用</span>' + (c.disabled_auto ? '<div class="muted rate-note">探测失败自动停用</div>' : '')
+        : '<span class="badge ok">启用</span>';
       return '<tr><td class="nowrap">' + esc(c.name) + '</td><td class="nowrap">' + esc(c.group || '—') + '</td><td class="nowrap">' + esc(c.kind) + '</td>' +
         '<td><span class="url" title="' + esc(c.url) + '">' + esc(c.url) + '</span></td>' +
         '<td class="nowrap">' + st + '</td><td class="probe-cell">' + esc(c.probe || '—') + '</td>' +

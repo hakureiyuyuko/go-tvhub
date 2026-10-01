@@ -267,7 +267,7 @@ func importPlaylistFile(st *store.Store, path string) error {
 	if len(entries) == 0 {
 		return fmt.Errorf("播放列表 %s 中没有解析到频道", path)
 	}
-	res, err := st.ImportChannels(entries)
+	res, err := st.ImportChannels(entries, false) // 启动导入不动停用状态
 	if err != nil {
 		return err
 	}

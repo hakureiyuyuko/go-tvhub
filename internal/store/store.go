@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS channels (
   headers    TEXT NOT NULL DEFAULT '',
   sort_order INTEGER NOT NULL DEFAULT 0,
   disabled   INTEGER NOT NULL DEFAULT 0,
+  disabled_auto INTEGER NOT NULL DEFAULT 0,
   probe      TEXT NOT NULL DEFAULT '',
   probe_at   TEXT,
   created_at TEXT NOT NULL,
@@ -105,7 +106,47 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("初始化表结构失败: %w", err)
 	}
+	if err := s.migrate(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("升级表结构失败: %w", err)
+	}
 	return s, nil
+}
+
+// migrate 做轻量的增量升级：新表由 schema 建成，老库缺的列在这里补。
+func (s *Store) migrate() error {
+	// disabled_auto：区分「探测失败被面板自动停用」和「用户手动停用」。
+	// 前者在探测通过 / 重新导入播放列表时自动恢复启用，后者不会被动。
+	if ok, err := s.hasColumn("channels", "disabled_auto"); err != nil {
+		return err
+	} else if !ok {
+		if _, err := s.db.Exec(`ALTER TABLE channels ADD COLUMN disabled_auto INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+		// 老数据分不清是谁停的，但探测失败会留下 “探测失败：…” 的结果，按自动停用回填
+		if _, err := s.db.Exec(`UPDATE channels SET disabled_auto = 1 WHERE disabled = 1 AND probe LIKE '探测失败%'`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) hasColumn(table, column string) (bool, error) {
+	rows, err := s.db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // Close 关闭数据库。

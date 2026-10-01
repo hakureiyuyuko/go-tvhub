@@ -44,6 +44,7 @@ type ProbeStatus struct {
 	OK          int      `json:"ok"`
 	Failed      int      `json:"failed"`
 	Disabled    int      `json:"disabled"`
+	Enabled     int      `json:"enabled"` // 探测通过、自动恢复启用的数量
 	Current     string   `json:"current"`
 	StartedAt   string   `json:"started_at"`
 	FinishedAt  string   `json:"finished_at"`
@@ -125,11 +126,11 @@ func (s *Server) startProbe(autoDisable, includeDisabled bool) (ProbeStatus, err
 	if interval < probeMinInterval || interval > probeMaxInterval {
 		interval = probeDefaultInterval
 	}
-	go s.runProbe(targets, autoDisable, interval)
+	go s.runProbe(targets, autoDisable, includeDisabled, interval)
 	return s.probe.Status(), nil
 }
 
-func (s *Server) runProbe(targets []store.Channel, autoDisable bool, interval time.Duration) {
+func (s *Server) runProbe(targets []store.Channel, autoDisable, includeDisabled bool, interval time.Duration) {
 	sem := make(chan struct{}, probeConcurrency)
 	var wg sync.WaitGroup
 	for _, ch := range targets {
@@ -163,9 +164,17 @@ func (s *Server) runProbe(targets []store.Channel, autoDisable bool, interval ti
 				}
 			})
 			if !res.OK && autoDisable {
-				if err := s.st.SetChannelDisabled(ch.ID, true); err == nil {
+				if err := s.st.SetChannelAutoDisabled(ch.ID); err == nil {
 					s.mgr.Stop(ch.ID)
 					s.probe.set(func(st *ProbeStatus) { st.Disabled++ })
+				}
+			}
+			// 之前被面板自动停用的频道，这次探通了就恢复启用；
+			// 用户手动停用的频道只有在「复查旧台」（本次探测包含已停用）时才跟着恢复。
+			if res.OK && ch.Disabled && (ch.DisabledAuto || includeDisabled) {
+				if err := s.st.SetChannelEnabled(ch.ID); err == nil {
+					s.probe.set(func(st *ProbeStatus) { st.Enabled++ })
+					s.log.Info("探测通过，自动恢复启用", "channel", ch.ID, "name", ch.Name)
 				}
 			}
 		}(ch)
@@ -185,7 +194,7 @@ func (s *Server) runProbe(targets []store.Channel, autoDisable bool, interval ti
 	s.probe.mu.Unlock()
 	final := s.probe.Status()
 	s.log.Info("批量探测完成", "总", final.Total, "可用", final.OK, "失败", final.Failed,
-		"自动停用", final.Disabled, "取消", final.Cancelled)
+		"自动停用", final.Disabled, "恢复启用", final.Enabled, "取消", final.Cancelled)
 }
 
 // isProbeFailed 判断频道是否被标记为探测失败。
@@ -194,6 +203,7 @@ func isProbeFailed(probe string) bool {
 }
 
 // disableFailedChannels 把所有「已被标记为探测失败」的频道停用，返回停用数量。
+// 这种停用原因也是探测失败，所以记成自动停用：以后探通了会自动恢复。
 func (s *Server) disableFailedChannels(ctx context.Context) int {
 	list, err := s.st.ListChannels(true)
 	if err != nil {
@@ -204,7 +214,7 @@ func (s *Server) disableFailedChannels(ctx context.Context) int {
 		if c.Disabled || !isProbeFailed(c.Probe) {
 			continue
 		}
-		if err := s.st.SetChannelDisabled(c.ID, true); err == nil {
+		if err := s.st.SetChannelAutoDisabled(c.ID); err == nil {
 			s.mgr.Stop(c.ID)
 			n++
 		}

@@ -136,6 +136,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /admin/api/channels/{id}/toggle", s.needAdmin(s.apiChannelToggle))
 	mux.Handle("POST /admin/api/channels/{id}/probe", s.needAdmin(s.apiChannelProbe))
 	mux.Handle("POST /admin/api/channels/disable-failed", s.needAdmin(s.apiDisableFailed))
+	mux.Handle("POST /admin/api/channels/enable-all", s.needAdmin(s.apiEnableAllDisabled))
 
 	mux.Handle("POST /admin/api/probe/start", s.needAdmin(s.apiProbeStart))
 	mux.Handle("GET /admin/api/probe/status", s.needAdmin(s.apiProbeStatus))

@@ -21,30 +21,34 @@ type Channel struct {
 	Headers   string
 	SortOrder int
 	Disabled  bool
-	Probe     string
-	ProbeAt   *time.Time
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// DisabledAuto 表示这次停用是面板自动做的（探测失败），不是用户手动停的。
+	DisabledAuto bool
+	Probe        string
+	ProbeAt      *time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // Kind 返回该频道源地址的协议类型。
 func (c *Channel) Kind() string { return m3u.Kind(c.URL) }
 
-const channelCols = `id, name, url, group_name, logo, tvg_id, headers, sort_order, disabled, probe, probe_at, created_at, updated_at`
+const channelCols = `id, name, url, group_name, logo, tvg_id, headers, sort_order, disabled, disabled_auto, probe, probe_at, created_at, updated_at`
 
 func scanChannel(sc interface{ Scan(...any) error }) (*Channel, error) {
 	var (
-		c        Channel
-		disabled int
-		probeAt  sql.NullString
-		created  string
-		updated  string
+		c            Channel
+		disabled     int
+		disabledAuto int
+		probeAt      sql.NullString
+		created      string
+		updated      string
 	)
 	if err := sc.Scan(&c.ID, &c.Name, &c.URL, &c.Group, &c.Logo, &c.TvgID, &c.Headers,
-		&c.SortOrder, &disabled, &c.Probe, &probeAt, &created, &updated); err != nil {
+		&c.SortOrder, &disabled, &disabledAuto, &c.Probe, &probeAt, &created, &updated); err != nil {
 		return nil, err
 	}
 	c.Disabled = disabled != 0
+	c.DisabledAuto = disabledAuto != 0
 	c.ProbeAt = parseTS(probeAt)
 	c.CreatedAt = parseTSVal(created)
 	c.UpdatedAt = parseTSVal(updated)
@@ -53,16 +57,21 @@ func scanChannel(sc interface{ Scan(...any) error }) (*Channel, error) {
 
 // ImportResult 描述一次播放列表导入的结果。
 type ImportResult struct {
-	Added   int `json:"added"`
-	Updated int `json:"updated"`
-	Removed int `json:"removed"`
-	Total   int `json:"total"`
-	Kept    int `json:"kept"`
+	Added     int `json:"added"`
+	Updated   int `json:"updated"`
+	Removed   int `json:"removed"`
+	Total     int `json:"total"`
+	Kept      int `json:"kept"`
+	Reenabled int `json:"reenabled"` // 之前探测失败被自动停用、本次重新启用的数量
 }
 
 // ImportChannels 用新的播放列表覆盖频道表：按地址 upsert，播放列表里已消失的频道删除。
-// 频道的启用状态、探测结果和用户收藏会被保留。
-func (s *Store) ImportChannels(entries []m3u.Entry) (ImportResult, error) {
+// 探测结果和收藏都会被保留；用户手动停用的频道永远不受影响。
+//
+// reenableAuto 控制「因探测失败被面板自动停用的频道」要不要恢复启用：
+// 用户主动导入播放列表时给 true（列表刷新了，给那些台一次机会）；
+// 启动时的 -import 给 false，否则每次重启都会把已停用的台又放出来。
+func (s *Store) ImportChannels(entries []m3u.Entry, reenableAuto bool) (ImportResult, error) {
 	var res ImportResult
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -74,16 +83,18 @@ func (s *Store) ImportChannels(entries []m3u.Entry) (ImportResult, error) {
 		id                                int64
 		name, group, logo, tvgID, headers string
 		sortOrder                         int
+		disabled, disabledAuto            int
 	}
 	existing := map[string]old{}
-	rows, err := tx.Query(`SELECT id, name, url, group_name, logo, tvg_id, headers, sort_order FROM channels`)
+	rows, err := tx.Query(`SELECT id, name, url, group_name, logo, tvg_id, headers, sort_order, disabled, disabled_auto FROM channels`)
 	if err != nil {
 		return res, err
 	}
 	for rows.Next() {
 		var o old
 		var url string
-		if err := rows.Scan(&o.id, &o.name, &url, &o.group, &o.logo, &o.tvgID, &o.headers, &o.sortOrder); err != nil {
+		if err := rows.Scan(&o.id, &o.name, &url, &o.group, &o.logo, &o.tvgID, &o.headers, &o.sortOrder,
+			&o.disabled, &o.disabledAuto); err != nil {
 			rows.Close()
 			return res, err
 		}
@@ -99,12 +110,21 @@ func (s *Store) ImportChannels(entries []m3u.Entry) (ImportResult, error) {
 	for i, e := range entries {
 		seen[e.URL] = true
 		if o, ok := existing[e.URL]; ok {
+			// 探测失败被自动停用的，既然播放列表又给了它，就重新启用（用户手动停的不动）
+			reenable := reenableAuto && o.disabled != 0 && o.disabledAuto != 0
 			if o.name != e.Name || o.group != e.Group || o.logo != e.Logo || o.tvgID != e.TvgID ||
-				o.headers != e.Headers || o.sortOrder != i {
+				o.headers != e.Headers || o.sortOrder != i || reenable {
 				if _, err := tx.Exec(
-					`UPDATE channels SET name=?, group_name=?, logo=?, tvg_id=?, headers=?, sort_order=?, updated_at=? WHERE id=?`,
-					e.Name, e.Group, e.Logo, e.TvgID, e.Headers, i, now, o.id); err != nil {
+					`UPDATE channels SET name=?, group_name=?, logo=?, tvg_id=?, headers=?, sort_order=?,
+					 disabled = CASE WHEN ? THEN 0 ELSE disabled END,
+					 disabled_auto = CASE WHEN ? THEN 0 ELSE disabled_auto END,
+					 updated_at=? WHERE id=?`,
+					e.Name, e.Group, e.Logo, e.TvgID, e.Headers, i,
+					boolInt(reenable), boolInt(reenable), now, o.id); err != nil {
 					return res, err
+				}
+				if reenable {
+					res.Reenabled++
 				}
 				res.Updated++
 			} else {
@@ -171,10 +191,32 @@ func (s *Store) ChannelByID(id int64) (*Channel, error) {
 	return c, nil
 }
 
-// SetChannelDisabled 启用/停用频道。
+// SetChannelDisabled 用户手动启用/停用频道（会清掉「自动停用」标记）。
 func (s *Store) SetChannelDisabled(id int64, disabled bool) error {
-	_, err := s.db.Exec(`UPDATE channels SET disabled = ?, updated_at = ? WHERE id = ?`, boolInt(disabled), nowTS(), id)
+	_, err := s.db.Exec(`UPDATE channels SET disabled = ?, disabled_auto = 0, updated_at = ? WHERE id = ?`, boolInt(disabled), nowTS(), id)
 	return err
+}
+
+// SetChannelAutoDisabled 探测失败时由面板自动停用（保留标记，便于以后自动恢复）。
+func (s *Store) SetChannelAutoDisabled(id int64) error {
+	_, err := s.db.Exec(`UPDATE channels SET disabled = 1, disabled_auto = 1, updated_at = ? WHERE id = ?`, nowTS(), id)
+	return err
+}
+
+// SetChannelEnabled 重新启用频道（并清掉自动停用标记）。
+func (s *Store) SetChannelEnabled(id int64) error {
+	_, err := s.db.Exec(`UPDATE channels SET disabled = 0, disabled_auto = 0, updated_at = ? WHERE id = ?`, nowTS(), id)
+	return err
+}
+
+// EnableAllDisabled 把所有停用的频道恢复启用，返回启用数量。
+func (s *Store) EnableAllDisabled() (int, error) {
+	res, err := s.db.Exec(`UPDATE channels SET disabled = 0, disabled_auto = 0, updated_at = ? WHERE disabled = 1`, nowTS())
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 // SetChannelProbe 保存探测结果。

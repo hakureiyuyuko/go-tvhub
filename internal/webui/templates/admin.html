@@ -46,7 +46,7 @@
       <h2>M3U 播放列表</h2>
       <span class="muted" id="m3uMeta"></span>
     </div>
-    <p class="muted">支持 RTSP / RTMP / UDP / HTTP 源。导入时按地址匹配：已存在的频道保留启用状态与收藏，播放列表里消失的频道会被删除。</p>
+    <p class="muted">支持 RTSP / RTMP / UDP / HTTP 源。导入时按地址匹配：已存在的频道保留收藏，播放列表里消失的频道会被删除；启用状态上——<b>因探测失败被面板自动停用的频道会自动恢复启用</b>，你自己手动停用的保持不变。</p>
     <textarea id="m3uText" spellcheck="false" placeholder="#EXTM3U&#10;#EXTINF:-1 ,CCTV1 综合&#10;rtsp://…"></textarea>
     <div class="row">
       <button class="btn primary" id="m3uSave">保存并应用</button>
@@ -68,12 +68,13 @@
         <button class="btn tiny" id="refreshChannels">刷新</button>
       </div>
     </div>
-    <p class="muted">「探测」会调用 ffprobe 读取源站的编码与码率，用于确认频道是否可用。一键探测只处理当前«启用中»的频道，后台执行，可以关掉页面。</p>
+    <p class="muted">「探测」会调用 ffprobe 读取源站的编码与码率，用于确认频道是否可用。一键探测只处理当前«启用中»的频道，后台执行，可以关掉页面。<b>被探测失败自动停用的频道，以后探测通过会自己恢复启用</b>；手动停用的不会被碰。</p>
     <div class="row probe-bar">
       <button class="btn primary" id="probeAll">一键探测全部</button>
       <label class="switch"><input type="checkbox" id="probeAutoDisable" checked><span>自动停用探测失败的频道</span></label>
       <label class="switch"><input type="checkbox" id="probeIncludeDisabled"><span>包含已停用的频道（复查旧台）</span></label>
       <button class="btn" id="disableFailed">停用已标记失败的</button>
+      <button class="btn" id="enableAllDisabled">启用全部已停用</button>
       <button class="btn tiny hidden" id="probeCancel">取消</button>
     </div>
     <div id="probeProgress" class="probe-progress hidden">

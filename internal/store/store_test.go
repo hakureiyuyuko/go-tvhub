@@ -91,7 +91,7 @@ func TestImportChannels(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries := m3u.ApplyGroups(m3u.Parse("#EXTM3U\n#EXTINF:-1,CCTV1\nrtsp://a/1\n#EXTINF:-1,湖南卫视\nrtsp://a/2\n"))
-	res, err := s.ImportChannels(entries)
+	res, err := s.ImportChannels(entries, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestImportChannels(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 改名 + 删除一条
-	res2, err := s.ImportChannels([]m3u.Entry{{Name: "CCTV-1 综合", URL: "rtsp://a/1", Group: "央视"}})
+	res2, err := s.ImportChannels([]m3u.Entry{{Name: "CCTV-1 综合", URL: "rtsp://a/1", Group: "央视"}}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
